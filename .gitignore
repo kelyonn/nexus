@@ -1,0 +1,46 @@
+# --- OS / Editor ---
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --- Logs / temp ---
+*.log
+*.tmp
+*.temp
+
+# --- Build / packaging ---
+dist/
+build/
+*.egg-info/
+
+# --- Kubernetes / Helm local artifacts ---
+*.tgz
+charts/
+
+# --- Local secrets / env files ---
+.env
+.env.*
+*.local
+
+# --- Minikube / kubectl local output files ---
+kubeconfig
+*.kubeconfig

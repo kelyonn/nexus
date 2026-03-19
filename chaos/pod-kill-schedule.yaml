@@ -1,0 +1,20 @@
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: nexus-pod-kill-schedule
+  namespace: chaos-mesh
+spec:
+  schedule: "*/3 * * * *"
+  historyLimit: 3
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: fixed-percent
+    value: "50"
+    selector:
+      namespaces:
+        - nexus
+      labelSelectors:
+        app: nexus-app
+    duration: "1m"

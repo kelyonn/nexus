@@ -1,0 +1,22 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nexus-app-restarts
+  namespace: monitoring
+  labels:
+    app: nexus-app
+spec:
+  groups:
+    - name: nexus-app-restarts.rules
+      rules:
+        - alert: NexusAppHighRestarts
+          expr: |
+            sum by (namespace, pod, container) (
+              increase(kube_pod_container_status_restarts_total{namespace="nexus", container="nexus-app"}[5m])
+            ) > 3
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High restart rate for nexus-app"
+            description: "Container restarts exceeded 3 in 5m for nexus-app."

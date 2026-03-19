@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: nexus-chaos
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kelyonnnn17/nexus.git
+    targetRevision: dev_shubhang
+    path: chaos
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chaos-mesh
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

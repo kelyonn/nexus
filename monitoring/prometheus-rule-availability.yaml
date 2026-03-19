@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: nexus-app-availability
+  namespace: monitoring
+  labels:
+    app: nexus-app
+spec:
+  groups:
+    - name: nexus-app-availability.rules
+      rules:
+        - alert: NexusAppReplicaShortage
+          expr: |
+            sum by (namespace, deployment) (
+              kube_deployment_status_replicas_available{namespace="nexus", deployment="nexus-app"}
+            ) <
+            sum by (namespace, deployment) (
+              kube_deployment_spec_replicas{namespace="nexus", deployment="nexus-app"}
+            )
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Nexus app replicas below desired"
+            description: "Available replicas are below desired for deployment nexus-app in default namespace."

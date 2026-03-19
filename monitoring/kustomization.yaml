@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+
+resources:
+  - namespace.yaml
+  - grafana-datasource.yaml
+  - prometheus-rule-availability.yaml
+  - prometheus-rule-restarts.yaml
+
+configMapGenerator:
+  - name: nexus-grafana-dashboards
+    files:
+      - dashboards/app-availability.json
+      - dashboards/pod-restarts.json
+      - dashboards/resource-usage.json
+      - dashboards/replica-status.json
+
+generatorOptions:
+  disableNameSuffixHash: true
+  labels:
+    grafana_dashboard: "1"
