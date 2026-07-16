@@ -3,8 +3,8 @@
 This directory will hold the CLI implementation (Typer app). **No code yet** —
 implementation follows the PRD's Phase 1 roadmap.
 
-- **Spec:** [docs/PRD.md](../docs/PRD.md) §7 (commands), §11 (architecture), §16 (build order)
-- **Skills needed:** [docs/nexus-learning-roadmap.md](../docs/nexus-learning-roadmap.md) Stage 7 (Typer, subprocess, Jinja2)
+- **Spec:** the PRD §7 (commands), §11 (architecture), §16 (build order)
+- **Skills needed:** the learning roadmap Stage 7 (Typer, subprocess, Jinja2)
 
 ## What lands here (Phase 1, in order)
 

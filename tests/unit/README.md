@@ -1,6 +1,6 @@
 # tests/unit — fast, no-cluster tests
 
-Spec: [docs/PRD.md](../../docs/PRD.md) §18. Framework: `pytest` + `pytest-cov`
+Spec: the PRD §18. Framework: `pytest` + `pytest-cov`
 (target 80%+ on `nexus_cli/core/`).
 
 Covers:

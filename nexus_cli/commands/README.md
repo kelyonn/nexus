@@ -3,7 +3,7 @@
 Each Nexus command gets its own module here, registered on the Typer app in
 `main.py`.
 
-- **Behavior spec:** [docs/PRD.md](../../docs/PRD.md) §7 (exact requirements per command), §8 (exact terminal output to produce)
+- **Behavior spec:** the PRD §7 (exact requirements per command), §8 (exact terminal output to produce)
 - **Build order (PRD §16):** `init` → `status` → `watch` → `deploy` → `destroy` (Phase 1), then `chaos`, `logs`, `upgrade`, `rollback`, `doctor` (Phase 2)
 
 Ground rules: destructive commands always confirm (§7.5); `deploy` and
