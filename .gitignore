@@ -44,3 +44,7 @@ charts/
 # --- Minikube / kubectl local output files ---
 kubeconfig
 *.kubeconfig
+
+# --- Local-only planning docs & agent guide (not published) ---
+/docs/
+/CLAUDE.md
