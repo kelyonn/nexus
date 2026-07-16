@@ -1,206 +1,91 @@
-# Installation Guide
+# Installation
 
-This guide covers everything required to run Nexus locally with Minikube.
+## Installing Nexus (users)
 
-## 1) Required tools
+> 🚧 **Not yet published.** Nexus has not shipped its first release. When
+> Phase 1 lands, installation will be:
+>
+> ```bash
+> pip install nexus-platform          # PyPI (P0)
+> curl -sSL https://get.nexus.sh | bash   # installer script (P0)
+> brew tap kelyonnnn17/nexus && brew install nexus   # Homebrew (P1)
+> ```
 
-- Docker Desktop (or Docker Engine)
-- Minikube
-- kubectl
-- Helm (v3+)
-- Git
+Until then, this document covers **contributor setup** — the environment for
+building Nexus itself.
 
-## 2) Install tools
+## Contributor setup
 
-### Windows (recommended with winget)
+### 1) Python toolchain
 
-```powershell
-winget install Docker.DockerDesktop
-winget install Kubernetes.minikube
-winget install Kubernetes.kubectl
-winget install Helm.Helm
-winget install Git.Git
+Nexus requires **Python 3.10+**.
+
+```bash
+python3 --version                   # must be >= 3.10
+cd nexus                            # repo root
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
 ```
 
-### macOS (Homebrew)
+Once `pyproject.toml` exists (first Phase 1 task), install the package
+editable with dev extras:
+
+```bash
+pip install -e ".[dev]"             # typer, jinja2, pyyaml, kubernetes,
+                                    # pytest, pytest-cov, ruff, mypy
+```
+
+### 2) Cluster tooling (for integration tests / manual verification)
+
+The CLI wraps `kubectl` and `helm` and needs a local cluster to test against.
+
+**macOS (Homebrew):**
 
 ```bash
 brew install --cask docker
 brew install minikube kubectl helm git
 ```
 
-### Linux (example)
+**Windows (winget):**
 
-Install Docker from your distro docs, then:
-
-```bash
-# kubectl
-curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-
-# minikube
-curl -LO https://storage.googleapis.com/minikube/releases/latest/minikube-linux-amd64
-sudo install minikube-linux-amd64 /usr/local/bin/minikube
-
-# helm
-curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+```powershell
+winget install Docker.DockerDesktop Kubernetes.minikube Kubernetes.kubectl Helm.Helm Git.Git
 ```
 
-## 3) Verify installations
+**Linux:** install Docker from your distro docs, then kubectl/minikube/helm per
+their official install scripts (full commands preserved in
+[legacy/INSTALLATION.md](legacy/INSTALLATION.md) §2).
+
+**Verify:**
 
 ```bash
-docker version
-minikube version
-kubectl version --client
-helm version
-git --version
+docker version && minikube version && kubectl version --client && helm version
 ```
 
-## 4) Start Minikube
+### 3) Start a local cluster
 
 ```bash
 minikube start --driver=docker
-kubectl get nodes
+kubectl get nodes                   # expect one Ready node
 ```
 
-If Kubernetes commands fail after a restart:
+If the API becomes unreachable after a reboot (`EOF` / `TLS handshake
+timeout`): `minikube update-context && minikube start --driver=docker`.
+
+### 4) Quality gates
+
+Run before every commit (CI will enforce these):
 
 ```bash
-minikube update-context
-minikube start --driver=docker
+ruff check .
+mypy nexus_cli
+pytest
 ```
 
-## 5) Install platform dependencies
+## Platform components (ArgoCD, monitoring, Chaos Mesh)
 
-### ArgoCD
-
-```bash
-kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml --server-side --force-conflicts
-kubectl get pods -n argocd
-```
-
-### Monitoring stack (Prometheus Operator + Grafana)
-
-```bash
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo update
-helm upgrade --install kube-prom-stack prometheus-community/kube-prometheus-stack -n monitoring --create-namespace
-```
-
-Verify CRDs:
-
-- Windows PowerShell:
-
-```powershell
-kubectl get crd | findstr monitoring.coreos.com
-```
-
-- macOS/Linux:
-
-```bash
-kubectl get crd | grep monitoring.coreos.com
-```
-
-### Chaos Mesh
-
-```bash
-helm repo add chaos-mesh https://charts.chaos-mesh.org
-helm repo update
-helm upgrade --install chaos-mesh chaos-mesh/chaos-mesh -n chaos-mesh --create-namespace --set chaosDaemon.runtime=containerd --set chaosDaemon.socketPath=/run/containerd/containerd.sock
-```
-
-Verify CRDs:
-
-- Windows PowerShell:
-
-```powershell
-kubectl get crd | findstr chaos-mesh.org
-```
-
-- macOS/Linux:
-
-```bash
-kubectl get crd | grep chaos-mesh.org
-```
-
-## 6) Configure GitOps source
-
-Update these files with your repo and branch:
-
-- `application.yaml`
-- `argocd/application-monitoring.yaml`
-- `argocd/application-chaos.yaml`
-
-Set:
-
-- `spec.source.repoURL` to your GitHub repo URL
-- `spec.source.targetRevision` to your branch (for example `main`)
-
-## 7) Apply ArgoCD Applications
-
-```bash
-kubectl apply -f application.yaml
-kubectl apply -f argocd/application-monitoring.yaml
-kubectl apply -f argocd/application-chaos.yaml
-kubectl get application -n argocd -o wide
-```
-
-## 8) Access services
-
-### Nexus app
-
-```bash
-kubectl -n nexus port-forward svc/nexus-service 18080:80
-```
-
-Open `http://127.0.0.1:18080`
-
-### ArgoCD UI
-
-```bash
-minikube service argocd-server -n argocd
-```
-
-Username: `admin`
-
-Password (Windows PowerShell):
-
-```powershell
-$b64 = kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}"
-[System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($b64))
-```
-
-Password (macOS/Linux):
-
-```bash
-kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 --decode; echo
-```
-
-### Grafana UI
-
-```bash
-kubectl -n monitoring port-forward svc/kube-prom-stack-grafana 3000:80
-```
-
-Open `http://127.0.0.1:3000`
-
-## 9) Quick health checks
-
-```bash
-kubectl get application -n argocd -o wide
-kubectl get pods -n nexus
-kubectl get pods -n monitoring
-kubectl get pods -n chaos-mesh
-```
-
-## 10) Common issues
-
-- `Unable to connect to the server: EOF` or `TLS handshake timeout`
-  - `minikube update-context`
-  - `minikube start --driver=docker`
-  - Retry command
-- Argo app stuck `OutOfSync` with missing CRDs
-  - Ensure monitoring and chaos Helm installs completed
-- `minikube service` not reachable on Windows
-  - Prefer `kubectl port-forward`
+`nexus deploy` will install these automatically via Helm. For manual
+experimentation or debugging, the hand-install commands are preserved in
+[legacy/INSTALLATION.md](legacy/INSTALLATION.md) §5 — they are exactly what the
+CLI automates.
