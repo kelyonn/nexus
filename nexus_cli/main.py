@@ -1,8 +1,7 @@
 """Nexus CLI entry point.
 
-Defines the Typer application. Subcommands are registered as they are built
-(``init`` first — see the implementation plan). For now the app exposes
-``--version`` and ``--help`` so the package is installable and runnable.
+Defines the Typer application and registers each command module. Subcommands
+are added below as they are built — see the implementation plan for order.
 """
 
 from __future__ import annotations
@@ -10,6 +9,7 @@ from __future__ import annotations
 import typer
 
 from nexus_cli import __version__
+from nexus_cli.commands.init import init as _init_command
 
 app = typer.Typer(
     name="nexus",
@@ -17,6 +17,8 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+app.command(name="init")(_init_command)
 
 
 def _version_callback(value: bool) -> None:
