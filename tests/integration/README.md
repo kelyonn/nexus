@@ -1,6 +1,6 @@
 # tests/integration — against a real cluster
 
-Spec: [docs/PRD.md](../../docs/PRD.md) §18. Runs against Kind or Minikube
+Spec: the PRD §18. Runs against Kind or Minikube
 (locally and in GitHub Actions).
 
 Covers:
