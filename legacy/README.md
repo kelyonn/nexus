@@ -1,7 +1,7 @@
 > **📦 ARCHIVED — original manifest-based demo.**
 > This is the original Nexus GitOps demo: hand-written manifests synced by ArgoCD. It still runs exactly as documented below, and now serves two purposes for the Nexus CLI project (see the repo root):
 > 1. **Reference implementation** — this is precisely the output `nexus deploy` will generate automatically.
-> 2. **Template source material** — the manifests here get parameterized into the CLI's Jinja2 templates (see `docs/PRD.md`, "Repository Transition").
+> 2. **Template source material** — the manifests here get parameterized into the CLI's Jinja2 templates.
 >
 > Treat this directory as **read-only**. Known quirk: the ArgoCD Applications point `targetRevision: dev_shubhang`, which may not match your working branch — update it if you actually run the demo.
 

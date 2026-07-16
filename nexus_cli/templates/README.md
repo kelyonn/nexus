@@ -2,7 +2,7 @@
 
 The YAML that `nexus deploy` renders from `nexus.yaml`. **Derive these from
 the archived demo's manifests by parameterizing them — do not write from
-scratch.** Full mapping table: [docs/PRD.md](../../docs/PRD.md) §0.
+scratch.** Full mapping table: the PRD §0.
 
 | Template (to create) | Derived from |
 |---|---|
