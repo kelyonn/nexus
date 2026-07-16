@@ -1,0 +1,27 @@
+{# PRD §7.6 mandates a gentle default blast radius ("kills exactly one pod at
+   random, not all replicas"). The legacy demo's Schedule used
+   `mode: fixed-percent, value: "50"`; this template deliberately uses
+   `mode: one` instead, since the functional spec's stated product behavior
+   takes precedence over the legacy manifest's literal historical value. #}
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: {{ app.name }}-chaos-schedule
+  namespace: chaos-mesh
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  schedule: "{{ platform.chaosSchedule }}"
+  historyLimit: 3
+  concurrencyPolicy: Forbid
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces:
+        - {{ app.name }}
+      labelSelectors:
+        app: {{ app.name }}
+    duration: "1m"
