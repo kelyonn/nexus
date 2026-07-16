@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ app.name }}
+  namespace: {{ app.name }}
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  selector:
+    app: {{ app.name }}
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: {{ app.port }}
+  type: LoadBalancer
