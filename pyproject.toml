@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nexus-platform"
+description = "GitOps platform CLI: production-grade Kubernetes for any app, from one nexus.yaml."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+authors = [{ name = "Kalyan" }]
+keywords = ["kubernetes", "gitops", "argocd", "cli", "devops"]
+dynamic = ["version"]
+dependencies = [
+    "typer>=0.12",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "types-PyYAML",
+]
+
+[project.scripts]
+nexus = "nexus_cli.main:app"
+
+[tool.hatch.version]
+path = "nexus_cli/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nexus_cli"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+extend-exclude = ["legacy", "venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["nexus_cli"]
+disallow_untyped_defs = true
+warn_unused_ignores = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
