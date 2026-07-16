@@ -1,0 +1,26 @@
+# nexus.yaml for the flask-demo example.
+#
+# This app is the original Nexus demo (see ../../legacy/app/), promoted here
+# as the reference example and the app used by integration/e2e tests. Its
+# real values (port 5050, /healthz) differ from the Flask *preset* defaults
+# (port 5000, /health) — that's expected; presets are stack conventions, this
+# file is what the app actually needs (PRD §0).
+
+app:
+  name: nexus-app
+  image: kelyonnnn17/nexus-app:v1
+  port: 5050
+  healthPath: /healthz
+  stack: flask
+  replicas: 2
+  env:
+    - name: VERSION
+      value: v1
+    - name: BG_COLOR
+      value: blue
+
+platform:
+  repoURL: https://github.com/kelyonn/nexus.git
+  branch: cli-platform
+  monitoring: true
+  chaos: false

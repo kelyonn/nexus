@@ -1,0 +1,50 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ app.name }}-availability
+  namespace: monitoring
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  groups:
+    - name: {{ app.name }}-availability.rules
+      rules:
+        - alert: NexusAppReplicaShortage
+          expr: |
+            sum by (namespace, deployment) (
+              kube_deployment_status_replicas_available{namespace="{{ app.name }}", deployment="{{ app.name }}"}
+            ) <
+            sum by (namespace, deployment) (
+              kube_deployment_spec_replicas{namespace="{{ app.name }}", deployment="{{ app.name }}"}
+            )
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ app.name }} replicas below desired"
+            description: "Available replicas are below desired for deployment {{ app.name }} in {{ app.name }} namespace."
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ app.name }}-restarts
+  namespace: monitoring
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  groups:
+    - name: {{ app.name }}-restarts.rules
+      rules:
+        - alert: NexusAppHighRestarts
+          expr: |
+            sum by (namespace, pod, container) (
+              increase(kube_pod_container_status_restarts_total{namespace="{{ app.name }}", container="{{ app.name }}"}[5m])
+            ) > 3
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High restart rate for {{ app.name }}"
+            description: "Container restarts exceeded 3 in 5m for {{ app.name }}."

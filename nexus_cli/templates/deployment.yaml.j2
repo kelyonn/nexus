@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ app.name }}
+  namespace: {{ app.name }}
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  replicas: {{ app.replicas }}
+  selector:
+    matchLabels:
+      app: {{ app.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ app.name }}
+    spec:
+      containers:
+      - name: {{ app.name }}
+        image: {{ app.image }}
+        imagePullPolicy: Always
+        ports:
+        - containerPort: {{ app.port }}
+{% if app.env %}
+        env:
+{% for var in app.env %}
+        - name: {{ var.name }}
+          value: "{{ var.value }}"
+{% endfor %}
+{% endif %}
+        resources:
+          requests:
+            cpu: {{ app.resources.requests.cpu }}
+            memory: {{ app.resources.requests.memory }}
+          limits:
+            cpu: {{ app.resources.limits.cpu }}
+            memory: {{ app.resources.limits.memory }}
+        readinessProbe:
+          httpGet:
+            path: {{ app.healthPath }}
+            port: {{ app.port }}
+          initialDelaySeconds: 3
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: {{ app.healthPath }}
+            port: {{ app.port }}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
