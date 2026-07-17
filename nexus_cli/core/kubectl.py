@@ -132,6 +132,12 @@ def apply_manifest(text: str) -> subprocess.CompletedProcess[str]:
     return result
 
 
+_ALREADY_GONE_MARKERS = (
+    "doesn't have a resource type",
+    "the server could not find the requested resource",
+)
+
+
 def delete(
     resource: str,
     name: str,
@@ -139,13 +145,30 @@ def delete(
     namespace: str | None = None,
     ignore_not_found: bool = True,
 ) -> subprocess.CompletedProcess[str]:
-    """``kubectl delete <resource> <name> [-n ns]``."""
+    """``kubectl delete <resource> <name> [-n ns]``.
+
+    With ``ignore_not_found`` (default), treats "already gone" as success in
+    both senses: the object doesn't exist (``--ignore-not-found``), or the
+    resource type/CRD itself isn't installed (e.g. deleting an ArgoCD
+    Application on a cluster where ArgoCD was never installed) — a case
+    ``--ignore-not-found`` alone doesn't cover. Needed for `nexus destroy`
+    to stay idempotent regardless of *why* a resource isn't there.
+    """
     args = ["delete", resource, name]
     if namespace:
         args += ["-n", namespace]
     if ignore_not_found:
         args.append("--ignore-not-found=true")
-    return run(args, timeout=APPLY_TIMEOUT)
+    result = run(args, timeout=APPLY_TIMEOUT, check=False)
+    if result.returncode != 0:
+        already_gone = any(m in result.stderr.lower() for m in _ALREADY_GONE_MARKERS)
+        if not (ignore_not_found and already_gone):
+            raise NexusError(
+                what=f"kubectl delete {resource} {name} failed.",
+                why=result.stderr.strip() or f"exit code {result.returncode}",
+                fix="Check the error above and your cluster connection.",
+            )
+    return result
 
 
 def namespace_exists(name: str) -> bool:

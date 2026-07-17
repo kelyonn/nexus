@@ -219,6 +219,53 @@ def test_delete_builds_correct_args(monkeypatch: pytest.MonkeyPatch) -> None:
     ]
 
 
+def test_delete_treats_missing_object_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=0))
+    result = kubectl.delete("namespace", "my-app")
+    assert result.returncode == 0
+
+
+def test_delete_treats_missing_resource_type_as_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(
+        kubectl.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(
+            returncode=1, stderr="error: the server doesn't have a resource type \"application\""
+        ),
+    )
+    result = kubectl.delete("application", "my-app", namespace="argocd")
+    assert result.returncode == 1  # returned, not raised — treated as already gone
+
+
+def test_delete_raises_on_real_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(
+        kubectl.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=1, stderr="connection refused"),
+    )
+    with pytest.raises(NexusError) as exc_info:
+        kubectl.delete("namespace", "my-app")
+    assert "connection refused" in exc_info.value.why
+
+
+def test_delete_raises_on_real_failure_even_with_ignore_not_found_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(
+        kubectl.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(
+            returncode=1, stderr="error: the server doesn't have a resource type \"application\""
+        ),
+    )
+    with pytest.raises(NexusError):
+        kubectl.delete("application", "my-app", namespace="argocd", ignore_not_found=False)
+
+
 def test_namespace_exists_true(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_which(monkeypatch, True)
     monkeypatch.setattr(kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=0))
