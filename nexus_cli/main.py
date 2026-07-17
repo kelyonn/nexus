@@ -9,6 +9,8 @@ from __future__ import annotations
 import typer
 
 from nexus_cli import __version__
+from nexus_cli.commands.deploy import deploy as _deploy_command
+from nexus_cli.commands.destroy import destroy as _destroy_command
 from nexus_cli.commands.init import init as _init_command
 from nexus_cli.commands.status import status as _status_command
 from nexus_cli.commands.watch import watch as _watch_command
@@ -21,8 +23,10 @@ app = typer.Typer(
 )
 
 app.command(name="init")(_init_command)
+app.command(name="deploy")(_deploy_command)
 app.command(name="status")(_status_command)
 app.command(name="watch")(_watch_command)
+app.command(name="destroy")(_destroy_command)
 
 
 def _version_callback(value: bool) -> None:
