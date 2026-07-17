@@ -1,0 +1,94 @@
+"""Unit tests for nexus_cli.core.argocd (mocked kubectl; no live cluster)."""
+
+from __future__ import annotations
+
+import pytest
+
+from nexus_cli.core import argocd
+from nexus_cli.core.output import NexusError
+
+
+def test_register_applies_manifest(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, str] = {}
+    monkeypatch.setattr(
+        argocd.kubectl, "apply_manifest", lambda text: captured.setdefault("text", text)
+    )
+    argocd.register("kind: Application")
+    assert captured["text"] == "kind: Application"
+
+
+def test_get_status_parses_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {
+        "status": {
+            "sync": {"status": "Synced", "revision": "abc123"},
+            "health": {"status": "Healthy"},
+            "operationState": {"finishedAt": "2026-01-01T00:00:00Z"},
+        }
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    result = argocd.get_status("my-app")
+    assert result is not None
+    assert result.sync_status == "Synced"
+    assert result.health_status == "Healthy"
+    assert result.revision == "abc123"
+    assert result.last_sync_time == "2026-01-01T00:00:00Z"
+
+
+def test_get_status_returns_none_when_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what="not found")
+
+    monkeypatch.setattr(argocd.kubectl, "get_json", raise_not_found)
+    assert argocd.get_status("missing-app") is None
+
+
+def test_get_status_defaults_to_unknown_for_missing_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: {})
+    result = argocd.get_status("my-app")
+    assert result is not None
+    assert result.sync_status == "Unknown"
+    assert result.health_status == "Unknown"
+
+
+def test_trigger_sync_patches_refresh_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, list[str]] = {}
+    monkeypatch.setattr(argocd.kubectl, "run", lambda args, **k: captured.setdefault("args", args))
+    argocd.trigger_sync("my-app")
+    assert "patch" in captured["args"]
+    assert "refresh" in captured["args"][-1]
+
+
+def test_wait_for_healthy_returns_when_synced_and_healthy(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        argocd,
+        "get_status",
+        lambda name: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Healthy",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+    result = argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
+    assert result.sync_status == "Synced"
+
+
+def test_wait_for_healthy_raises_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        argocd,
+        "get_status",
+        lambda name: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="OutOfSync",
+            health_status="Degraded",
+            revision=None,
+            last_sync_time=None,
+        ),
+    )
+    fake_clock = iter([0, 1, 2, 100])
+    monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
+    monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
+    with pytest.raises(NexusError) as exc_info:
+        argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
+    assert "did not become Synced" in exc_info.value.what
