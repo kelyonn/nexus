@@ -1,30 +1,62 @@
-"""``nexus deploy`` — install platform deps, apply manifests, register with
-ArgoCD, verify (PRD §7.2, §8).
+"""``nexus deploy`` — install platform deps, apply manifests, sync them to
+git, register with ArgoCD, verify (PRD §7.2, §8).
 
 Never proceeds without confirmation (or ``--yes``). Safe to run repeatedly:
 platform components already installed are skipped, and ``kubectl apply``
 updates existing app manifests / the ArgoCD Application in place rather than
 duplicating them (``helm upgrade --install`` is idempotent on its own too).
 
-Known gap (Phase 1): this command applies the rendered manifests directly
-via kubectl *and* registers an ArgoCD Application pointing at the user's own
-git repo/branch (template path ``k8s``). It does not commit anything to that
-repo — only ``nexus upgrade`` (PRD §7.9) does that. If the repo's ``k8s/``
-path doesn't already contain matching manifests, ArgoCD will report the
-Application as OutOfSync (and, since ``prune: true``, may remove the
-directly-applied resources on its next reconcile) until the user's repo
-catches up. The app is still live immediately via the direct kubectl apply;
-only ArgoCD's own view of sync state is affected until git and cluster agree.
+GitOps bootstrap: ArgoCD's Application tracks ``platform.repoURL`` /
+``platform.branch`` at the fixed path ``k8s/`` (see the template mapping in
+PRD §0). For ArgoCD to ever report the app as **Synced** (not just Healthy),
+that path must actually contain the same manifests Nexus just applied
+directly. So, between applying manifests and registering the Application,
+this command also writes the rendered manifests to ``<cwd>/k8s/`` and
+commits + pushes them (``sync_manifests_to_git``) — establishing the git
+baseline ArgoCD needs on the very first deploy, not just on later
+``nexus upgrade`` runs.
+
+That git step is scoped and, deliberately, a *soft* step: it only
+``git add``s the ``k8s/`` directory (so it can never sweep up unrelated
+dirty files elsewhere in the user's tree), is a no-op if nothing changed
+(idempotent), and — unlike every other step here — a failure in it prints a
+warning and lets deployment continue rather than aborting. Rationale: a
+misconfigured git remote/branch is common for a first-ever `nexus deploy`
+(no repo yet, wrong branch checked out, no push access), and failing the
+*entire* deploy over it would break the "app running in under 10 minutes"
+promise for a first-time or purely-local/demo user. The tradeoff: on a
+git-write failure, the app is still live (direct kubectl apply already
+succeeded), but ArgoCD's Application will show OutOfSync/Unknown until the
+user fixes their git setup and re-runs `nexus deploy` (safe — idempotent).
+
+Live-verified: with a real git remote reachable from inside the cluster (a
+`git daemon` on the host, reached via `host.minikube.internal` from a
+Minikube pod), `sync_manifests_to_git` + the explicit `argocd.trigger_sync`
+in `register_argocd_app` took a fresh Application from registration to
+`sync: Synced` — confirming this closes the original gap (previously,
+`nexus deploy` never wrote anything to the tracked repo, so ArgoCD had
+nothing valid to compare against and stayed at `sync: Unknown` forever).
+
+That same test surfaced a separate, unrelated finding worth knowing: on
+ArgoCD v3.4.5, `health` can stay `Progressing` for a Deployment that
+Kubernetes itself reports as fully ready (`Available: True`, N/N ready) —
+observed stable for 90+ seconds and unchanged by a manual hard-refresh. This
+looks like an upstream ArgoCD health-check quirk on this resource/version,
+not something `sync_manifests_to_git` or this command controls; `nexus
+status`/`nexus deploy` correctly report whatever ArgoCD itself says, so this
+can surface to users as "Synced" but not yet "Healthy" even when the app is
+actually fine — worth a `nexus status` cross-check if `deploy` times out here.
 """
 
 from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from pathlib import Path
 
 import typer
 
-from nexus_cli.core import argocd, helm, kubectl, output, preflight, render
+from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, render
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core.config import NexusConfig
 
@@ -44,6 +76,7 @@ CHAOS_REPO = ("chaos-mesh", "https://charts.chaos-mesh.org")
 CHAOS_CHART = "chaos-mesh/chaos-mesh"
 
 SYNC_WAIT_TIMEOUT = 120
+MANIFESTS_DIR = "k8s"  # must match argocd-app.yaml.j2's spec.source.path
 
 
 def _install_argocd() -> None:
@@ -89,24 +122,94 @@ def apply_app_manifests(cfg: NexusConfig) -> None:
         kubectl.apply_manifest(text)
 
 
+def sync_manifests_to_git(cfg: NexusConfig) -> str:
+    """Write rendered app manifests to ``<cwd>/k8s/`` and commit + push them.
+
+    Scoped to that one directory (``git add k8s/`` only) so unrelated dirty
+    files elsewhere are never touched. A no-op if nothing changed since the
+    last sync. Returns a short human-readable outcome string.
+    """
+    if not git.is_repo():
+        raise output.NexusError(
+            what="Current directory is not a git repository.",
+            why="ArgoCD needs these manifests committed to platform.repoURL to report 'Synced'.",
+            fix=(
+                "Run `git init`, add your remote, and commit nexus.yaml — "
+                "or point platform.repoURL at an existing repo you're inside of."
+            ),
+        )
+    branch = git.current_branch()
+    if branch != cfg.platform.branch:
+        raise output.NexusError(
+            what=f"Current git branch ('{branch}') does not match platform.branch "
+            f"('{cfg.platform.branch}').",
+            why="ArgoCD tracks platform.branch — committing here would desync it.",
+            fix=(
+                f"Run `git checkout {cfg.platform.branch}`, "
+                "or update platform.branch in nexus.yaml to match."
+            ),
+        )
+    remote = git.default_remote()
+    if not remote:
+        raise output.NexusError(
+            what="No git remote is configured.",
+            why="Nexus needs somewhere to push the rendered manifests for ArgoCD to track.",
+            fix=f"Run `git remote add origin {cfg.platform.repoURL}`.",
+        )
+
+    manifests_dir = Path(MANIFESTS_DIR)
+    manifests_dir.mkdir(exist_ok=True)
+    rendered = render.render_manifests(cfg)
+    for name, text in rendered.items():
+        if name == "argocd-app":
+            continue
+        (manifests_dir / f"{name}.yaml").write_text(text)
+
+    git.add([MANIFESTS_DIR])
+    if not git.has_staged_changes():
+        return "up to date — nothing to commit"
+
+    git.commit(f"nexus: sync k8s manifests for {cfg.app.name}")
+    git.push(remote, cfg.platform.branch)
+    return f"pushed to {remote}/{cfg.platform.branch}"
+
+
 def register_argocd_app(cfg: NexusConfig) -> None:
     rendered = render.render_manifests(cfg)
     argocd.register(rendered["argocd-app"])
+    # Nudge ArgoCD to reconcile now rather than waiting on its default poll —
+    # matters most right after sync_manifests_to_git just gave it fresh content.
+    argocd.trigger_sync(cfg.app.name)
 
 
-def _run_step(index: int, total: int, label: str, fn: Callable[[], None]) -> None:
+def _run_step(
+    index: int, total: int, label: str, fn: Callable[[], object], *, critical: bool
+) -> None:
+    """Run one deploy step.
+
+    Critical steps (PRD §12 partial-failure): a raised NexusError stops the
+    whole deploy. Non-critical steps (just the git-sync step — see module
+    docstring for why) only warn and let deploy continue. A step may return a
+    short outcome string, appended to its "done" line.
+    """
     output.step(f"[{index}/{total}] {label}...")
     start = time.monotonic()
     try:
-        fn()
+        result = fn()
     except output.NexusError as err:
+        elapsed = time.monotonic() - start
+        if critical:
+            output.print_error(err)
+            output.step("")
+            output.step("Deployment aborted at this step. Fix the issue above and re-run —")
+            output.step("`nexus deploy` is safe to run again; earlier steps will be skipped.")
+            raise typer.Exit(code=1) from err
+        output.warn(f"    skipped ({elapsed:.0f}s) — ArgoCD sync stays pending until this is fixed")
         output.print_error(err)
-        output.step("")
-        output.step("Deployment aborted at this step. Fix the issue above and re-run —")
-        output.step("`nexus deploy` is safe to run again; earlier steps will be skipped.")
-        raise typer.Exit(code=1) from err
+        return
     elapsed = time.monotonic() - start
-    output.success(f"    done ({elapsed:.0f}s)")
+    suffix = f" — {result}" if isinstance(result, str) else ""
+    output.success(f"    done ({elapsed:.0f}s){suffix}")
 
 
 def deploy(
@@ -115,7 +218,7 @@ def deploy(
     ),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip the confirmation prompt."),
 ) -> None:
-    """Install missing platform components, apply manifests, register with ArgoCD."""
+    """Install missing platform components, apply manifests, sync to git, register with ArgoCD."""
     try:
         preflight.ensure_cluster_ready(require_helm=True)
         cfg = nexus_config.load(config_path)
@@ -140,21 +243,32 @@ def deploy(
         else:
             output.step(f"✗ {label} not installed → will install")
 
-    plan: list[tuple[str, Callable[[], None]]] = []
+    # (label, fn, is_critical) — the git-sync step is the one non-critical entry.
+    plan: list[tuple[str, Callable[[], object], bool]] = []
     for label, namespace, installed in deps:
         if not installed:
-            plan.append((f"Install {label} → namespace: {namespace}", _INSTALL_FNS[label]))
-    plan.append((f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg)))
+            plan.append((f"Install {label} → namespace: {namespace}", _INSTALL_FNS[label], True))
+    plan.append(
+        (f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg), True)
+    )
+    plan.append(
+        (
+            f"Commit manifests to Git → {MANIFESTS_DIR}/",
+            lambda: sync_manifests_to_git(cfg),
+            False,
+        )
+    )
     plan.append(
         (
             f"Register ArgoCD app → tracking {cfg.platform.repoURL} @ {cfg.platform.branch}",
             lambda: register_argocd_app(cfg),
+            True,
         )
     )
 
     output.step("")
     output.step("Deployment plan:")
-    for i, (label, _fn) in enumerate(plan, start=1):
+    for i, (label, _fn, _critical) in enumerate(plan, start=1):
         output.step(f"  {i}. {label}")
     output.step("")
 
@@ -164,8 +278,9 @@ def deploy(
 
     output.step("")
     total = len(plan)
-    for i, (label, fn) in enumerate(plan, start=1):
-        _run_step(i, total, label.split(" →")[0], fn)
+    for i, (label, fn, critical) in enumerate(plan, start=1):
+        short_label = label.split(" →")[0]
+        _run_step(i, total, short_label, fn, critical=critical)
 
     output.step("")
     output.step("Waiting for sync...")

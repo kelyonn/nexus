@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from nexus_cli.commands import deploy as deploy_module
-from nexus_cli.core import argocd, helm, preflight
+from nexus_cli.core import argocd, git, helm, preflight
 from nexus_cli.core.config import AppConfig, NexusConfig, PlatformConfig
 from nexus_cli.core.output import NexusError
 from nexus_cli.main import app
@@ -58,6 +58,7 @@ def _stub_common(monkeypatch: pytest.MonkeyPatch, *, all_installed: bool = True)
     )
     monkeypatch.setattr(helm, "release_exists", lambda release, ns: all_installed)
     monkeypatch.setattr(deploy_module, "apply_app_manifests", lambda cfg: None)
+    monkeypatch.setattr(deploy_module, "sync_manifests_to_git", lambda cfg: "pushed to origin/main")
     monkeypatch.setattr(deploy_module, "register_argocd_app", lambda cfg: None)
     monkeypatch.setattr(
         argocd,
@@ -126,7 +127,9 @@ def test_deploy_skips_already_installed_deps(
     assert result.exit_code == 0, result.output
     assert "present → skip" in result.output
     assert "1. Apply app manifests" in result.output
-    assert "2. Register ArgoCD app" in result.output
+    assert "2. Commit manifests to Git" in result.output
+    assert "3. Register ArgoCD app" in result.output
+    assert "pushed to origin/main" in result.output
 
 
 def test_deploy_yes_flag_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -221,5 +224,89 @@ def test_register_argocd_app_registers_only_the_argocd_template(
         lambda c: {"argocd-app": "argo-yaml", "namespace": "ns"},
     )
     monkeypatch.setattr(deploy_module.argocd, "register", lambda text: registered.append(text))
+    synced: list[str] = []
+    monkeypatch.setattr(deploy_module.argocd, "trigger_sync", lambda name: synced.append(name))
     deploy_module.register_argocd_app(cfg)
     assert registered == ["argo-yaml"]
+    assert synced == ["my-app"]
+
+
+# --- sync_manifests_to_git ---
+
+
+def test_sync_manifests_not_a_repo_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(git, "is_repo", lambda: False)
+    cfg = _minimal_config()
+    with pytest.raises(NexusError) as exc_info:
+        deploy_module.sync_manifests_to_git(cfg)
+    assert "not a git repository" in exc_info.value.what
+
+
+def test_sync_manifests_branch_mismatch_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(git, "is_repo", lambda: True)
+    monkeypatch.setattr(git, "current_branch", lambda: "feature-x")
+    cfg = _minimal_config()  # platform.branch == "main"
+    with pytest.raises(NexusError) as exc_info:
+        deploy_module.sync_manifests_to_git(cfg)
+    assert "does not match platform.branch" in exc_info.value.what
+
+
+def test_sync_manifests_no_remote_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(git, "is_repo", lambda: True)
+    monkeypatch.setattr(git, "current_branch", lambda: "main")
+    monkeypatch.setattr(git, "default_remote", lambda: None)
+    cfg = _minimal_config()
+    with pytest.raises(NexusError) as exc_info:
+        deploy_module.sync_manifests_to_git(cfg)
+    assert "No git remote" in exc_info.value.what
+
+
+def test_sync_manifests_up_to_date_skips_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(git, "is_repo", lambda: True)
+    monkeypatch.setattr(git, "current_branch", lambda: "main")
+    monkeypatch.setattr(git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(git, "add", lambda paths: None)
+    monkeypatch.setattr(git, "has_staged_changes", lambda: False)
+    committed: list[str] = []
+    monkeypatch.setattr(git, "commit", lambda msg: committed.append(msg))
+    cfg = _minimal_config()
+    outcome = deploy_module.sync_manifests_to_git(cfg)
+    assert "nothing to commit" in outcome
+    assert committed == []
+
+
+def test_sync_manifests_commits_and_pushes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(git, "is_repo", lambda: True)
+    monkeypatch.setattr(git, "current_branch", lambda: "main")
+    monkeypatch.setattr(git, "default_remote", lambda: "origin")
+    added: list[list[str]] = []
+    monkeypatch.setattr(git, "add", lambda paths: added.append(paths))
+    monkeypatch.setattr(git, "has_staged_changes", lambda: True)
+    committed: list[str] = []
+    monkeypatch.setattr(git, "commit", lambda msg: committed.append(msg))
+    pushed: list[tuple[str, str]] = []
+    monkeypatch.setattr(git, "push", lambda remote, branch: pushed.append((remote, branch)))
+
+    cfg = _minimal_config()
+    outcome = deploy_module.sync_manifests_to_git(cfg)
+
+    assert added == [[deploy_module.MANIFESTS_DIR]]
+    assert committed == ["nexus: sync k8s manifests for my-app"]
+    assert pushed == [("origin", "main")]
+    assert outcome == "pushed to origin/main"
+
+    manifests_dir = tmp_path / deploy_module.MANIFESTS_DIR
+    assert manifests_dir.is_dir()
+    assert (manifests_dir / "namespace.yaml").is_file()
+    assert not (manifests_dir / "argocd-app.yaml").exists()  # excluded, per apply_app_manifests
