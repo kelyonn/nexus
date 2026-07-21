@@ -78,9 +78,9 @@ already installed and never duplicates resources.
 ## Repository map
 
 ```
-nexus_cli/     The Python package (Typer CLI) — Phase 1, in progress
-examples/      Sample apps for demos and e2e tests
-tests/         Unit + integration tests
+nexus_cli/     The Python package (Typer CLI) — Phase 1 core commands done
+examples/      Sample apps for demos and e2e tests (flask-demo, live-tested)
+tests/         176 unit tests (99% core coverage); integration tests: Phase 2
 legacy/        The original hand-written GitOps demo (archived, read-only)
 ```
 

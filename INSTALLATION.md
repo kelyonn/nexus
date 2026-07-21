@@ -28,8 +28,7 @@ source venv/bin/activate
 pip install --upgrade pip
 ```
 
-Once `pyproject.toml` exists (first Phase 1 task), install the package
-editable with dev extras:
+Install the package editable with dev extras:
 
 ```bash
 pip install -e ".[dev]"             # typer, jinja2, pyyaml, kubernetes,
