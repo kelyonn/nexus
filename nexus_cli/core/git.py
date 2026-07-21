@@ -48,7 +48,16 @@ def is_repo(path: str = ".") -> bool:
 
 
 def current_branch(path: str = ".") -> str | None:
-    result = _run(["-C", path, "rev-parse", "--abbrev-ref", "HEAD"], check=False)
+    """The current branch name, or None if not on a named branch.
+
+    Uses ``symbolic-ref`` rather than ``rev-parse --abbrev-ref HEAD``: the
+    latter needs to resolve HEAD to a commit, so it fails (misreporting
+    "None") on a brand-new repo with no commits yet — an "unborn" branch,
+    which is a very plausible first-run state. ``symbolic-ref`` reads what
+    branch HEAD points at directly, without needing a commit to exist, and
+    still correctly fails (returns None) in a detached-HEAD state.
+    """
+    result = _run(["-C", path, "symbolic-ref", "--short", "HEAD"], check=False)
     if result.returncode != 0:
         return None
     return result.stdout.strip() or None
