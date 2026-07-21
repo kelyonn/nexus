@@ -10,7 +10,14 @@ chaos testing (Chaos Mesh) on **your own cluster**, without a DevOps team.
 
 ## Status
 
-🚧 **In development — the CLI (Phase 1) is being built.**
+✅ **Phase 1 (core CLI) is done.** `nexus init`, `deploy`, `status`, `watch`,
+and `destroy` all exist and are verified against a real Minikube cluster —
+installing ArgoCD, deploying an app, checking its health, streaming its pod
+events, and tearing it down again, twice each way to confirm idempotency.
+
+Not yet built: `chaos`, `logs`, `upgrade`, `rollback`, `doctor` (Phase 2), and
+the dashboard (Phase 3). Not yet published to PyPI/Homebrew — install from
+source for now (see [Try it](#try-it) below).
 
 The original manifest-based demo that inspired the CLI still lives — runnable —
 in [legacy/](legacy/README.md).
