@@ -1,14 +1,19 @@
 # nexus_cli — the Nexus Python package
 
-This directory will hold the CLI implementation (Typer app). **No code yet** —
-implementation follows the PRD's Phase 1 roadmap.
+The CLI implementation (Typer app). Phase 1 (Week 1) is done.
 
 - **Spec:** the PRD §7 (commands), §11 (architecture), §16 (build order)
 - **Skills needed:** the learning roadmap Stage 7 (Typer, subprocess, Jinja2)
 
-## What lands here (Phase 1, in order)
+## What's here
 
-1. `main.py` — Typer entry point (`nexus = "nexus_cli.main:app"` in pyproject.toml)
-2. `core/` — config parsing/validation, preflight checks, kubectl/helm wrappers
-3. `templates/` — Jinja2 manifests derived from `legacy/` (PRD §0 mapping)
-4. `commands/` — `init`, `deploy`, `status`, `watch`, `destroy`, then Phase 2 commands
+1. `main.py` — Typer entry point, all five Phase 1 commands registered
+2. `core/` — config parsing/validation, preflight checks, and the
+   kubectl/helm/git/argocd subprocess wrappers
+3. `templates/` — all 7 Jinja2 manifests derived from `legacy/` (PRD §0 mapping)
+4. `commands/` — `init`, `deploy`, `status`, `watch`, `destroy` — built and
+   verified against a real Minikube cluster, not just unit-tested
+
+## Still to come (Week 2, Phase 2)
+
+`chaos`, `logs`, `upgrade`, `rollback`, `doctor`
