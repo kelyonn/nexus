@@ -1,10 +1,10 @@
 # templates/ — Jinja2 manifest templates
 
-The YAML that `nexus deploy` renders from `nexus.yaml`. **Derive these from
-the archived demo's manifests by parameterizing them — do not write from
-scratch.** Full mapping table: the PRD §0.
+The YAML that `nexus deploy` renders from `nexus.yaml`. All 7 built, derived
+from the archived demo's manifests by parameterizing them (PRD §0's mapping,
+below) — none invented from scratch.
 
-| Template (to create) | Derived from |
+| Template | Derived from |
 |---|---|
 | `deployment.yaml.j2` | `legacy/k8s/deployment.yaml` |
 | `service.yaml.j2` | `legacy/k8s/service.yaml` |
@@ -14,7 +14,10 @@ scratch.** Full mapping table: the PRD §0.
 | `grafana-dashboard.yaml.j2` | `legacy/monitoring/grafana-dashboards-configmap.yaml` |
 | `podchaos.yaml.j2` | `legacy/chaos/pod-kill.yaml` + `pod-kill-schedule.yaml` |
 
-Parameterize: `nexus-app` → `{{ app.name }}` · image → `{{ app.image }}` ·
+Parameterized: `nexus-app` → `{{ app.name }}` · image → `{{ app.image }}` ·
 `5050` → `{{ app.port }}` · `/healthz` → `{{ app.healthPath }}` · `replicas: 2`
-→ `{{ app.replicas }}`. Every template must render valid YAML for every stack
-preset (tested in `tests/unit/`).
+→ `{{ app.replicas }}`. Every template renders valid YAML for every stack
+preset, verified by the **golden test** (`tests/unit/test_render.py` — rendered
+output reproduces the legacy manifests) plus the two deliberate, documented
+deviations (`app.name` drives both namespace and resource name; chaos defaults
+to `mode: one`, not legacy's `fixed-percent: 50`).
