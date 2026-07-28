@@ -59,6 +59,18 @@ def render_manifests(config: NexusConfig) -> dict[str, str]:
     return rendered
 
 
+def render_template(name: str, config: NexusConfig) -> str:
+    """Render one named template, regardless of the monitoring/chaos toggles.
+
+    Used by commands that apply a specific manifest imperatively (e.g.
+    ``nexus chaos schedule enable``), where the action itself is the signal
+    to render it rather than ``platform.chaos``/``platform.monitoring``.
+    """
+    env = _environment()
+    context = {"app": config.app, "platform": config.platform}
+    return env.get_template(f"{name}.yaml.j2").render(**context)
+
+
 def parse_documents(text: str) -> list[dict]:
     """Parse a (possibly multi-document, ``---``-separated) YAML string."""
     return [doc for doc in yaml.safe_load_all(text) if doc is not None]
