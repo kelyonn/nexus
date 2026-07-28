@@ -106,6 +106,33 @@ def test_list_managed_apps_reraises_real_failures(monkeypatch: pytest.MonkeyPatc
         argocd.list_managed_apps()
 
 
+def test_sync_history_sorts_most_recent_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {
+        "status": {
+            "history": [
+                {"revision": "abc123", "deployedAt": "2026-01-01T00:00:00Z"},
+                {"revision": "def456", "deployedAt": "2026-01-02T00:00:00Z"},
+            ]
+        }
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    events = argocd.sync_history("my-app")
+    assert [e.revision for e in events] == ["def456", "abc123"]
+
+
+def test_sync_history_empty_when_no_history_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: {"status": {}})
+    assert argocd.sync_history("my-app") == []
+
+
+def test_sync_history_empty_when_app_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what="not found")
+
+    monkeypatch.setattr(argocd.kubectl, "get_json", raise_not_found)
+    assert argocd.sync_history("missing-app") == []
+
+
 def test_trigger_sync_patches_refresh_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, list[str]] = {}
     monkeypatch.setattr(argocd.kubectl, "run", lambda args, **k: captured.setdefault("args", args))
