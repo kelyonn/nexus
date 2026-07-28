@@ -49,6 +49,7 @@ def _patch_happy_path(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     monkeypatch.setattr(cd, "start_backend", start_backend)
     monkeypatch.setattr(cd, "start_frontend", start_frontend)
+    monkeypatch.setattr(cd, "start_grafana_port_forward", lambda: None)
     monkeypatch.setattr(cd, "wait_for_backend_ready", lambda: None)
     monkeypatch.setattr(cd, "dashboard_url", lambda token: f"http://x/?token={token}")
     monkeypatch.setattr(dashboard_module, "webbrowser", _FakeBrowser(calls))
@@ -129,6 +130,62 @@ def test_dashboard_happy_path_opens_browser_and_shuts_down_on_ctrl_c(
     assert "Dashboard ready" in result.output
     assert "Shutting down" in result.output
     assert calls["opened_url"] == "http://x/?token=test-token"
+    assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
+
+
+def test_dashboard_forwards_grafana_when_available_and_shuts_it_down(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_happy_path(monkeypatch)
+
+    def start_grafana() -> _FakeProc:
+        calls["grafana_proc"] = _FakeProc("grafana")
+        return calls["grafana_proc"]
+
+    monkeypatch.setattr(cd, "start_grafana_port_forward", start_grafana)
+
+    def raise_keyboard_interrupt() -> int:
+        raise KeyboardInterrupt
+
+    original_start_backend = cd.start_backend
+
+    def start_backend_and_arm_interrupt(token: str) -> _FakeProc:
+        proc = original_start_backend(token)
+        proc.wait = raise_keyboard_interrupt  # type: ignore[method-assign]
+        return proc
+
+    monkeypatch.setattr(cd, "start_backend", start_backend_and_arm_interrupt)
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0, result.output
+    assert "Port-forwarding Grafana" in result.output
+    assert calls["shutdown_called_with"] == (
+        calls["backend_proc"],
+        calls["frontend_proc"],
+        calls["grafana_proc"],
+    )
+
+
+def test_dashboard_no_grafana_reports_and_continues(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _patch_happy_path(monkeypatch)
+
+    def raise_keyboard_interrupt() -> int:
+        raise KeyboardInterrupt
+
+    original_start_backend = cd.start_backend
+
+    def start_backend_and_arm_interrupt(token: str) -> _FakeProc:
+        proc = original_start_backend(token)
+        proc.wait = raise_keyboard_interrupt  # type: ignore[method-assign]
+        return proc
+
+    monkeypatch.setattr(cd, "start_backend", start_backend_and_arm_interrupt)
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0, result.output
+    assert "No Grafana found" in result.output
     assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
 
 
