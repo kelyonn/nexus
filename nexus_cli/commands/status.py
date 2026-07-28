@@ -2,73 +2,33 @@
 
 Reads the Deployment's replica counts, the ArgoCD Application's sync/health
 status, and each pod's phase — surfacing ImagePullBackOff/CrashLoopBackOff
-with a context-aware fix suggestion (Minikube vs. a real registry).
+with a context-aware fix suggestion (Minikube vs. a real registry). The data
+gathering lives in ``core/status.py`` so the dashboard can reuse it; this
+module is just the terminal narration.
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 
 import typer
 
 from nexus_cli.core import argocd, kubectl, output, preflight
 from nexus_cli.core import config as nexus_config
+from nexus_cli.core.status import (
+    CRASH_REASONS,
+    IMAGE_PULL_REASONS,
+    PodInfo,
+    image_pull_fix,
+    list_pods,
+    replica_counts,
+)
 
-_IMAGE_PULL_REASONS = {"ImagePullBackOff", "ErrImagePull"}
-_CRASH_REASONS = {"CrashLoopBackOff"}
-
-
-@dataclass(frozen=True)
-class PodInfo:
-    name: str
-    phase: str
-    restarts: int
-    problem: str | None
-
-
-def _pod_problem(pod: dict) -> str | None:
-    for cs in pod.get("status", {}).get("containerStatuses", []):
-        reason = cs.get("state", {}).get("waiting", {}).get("reason")
-        if reason in _IMAGE_PULL_REASONS or reason in _CRASH_REASONS:
-            return str(reason)
-    return None
-
-
-def _pod_restarts(pod: dict) -> int:
-    statuses = pod.get("status", {}).get("containerStatuses", [])
-    return sum(cs.get("restartCount", 0) for cs in statuses)
-
-
-def list_pods(namespace: str) -> list[PodInfo]:
-    """Pods in the app's namespace (one app per namespace — no selector needed)."""
-    doc = kubectl.get_json("pods", namespace=namespace)
-    pods = []
-    for item in doc.get("items", []):
-        pods.append(
-            PodInfo(
-                name=item["metadata"]["name"],
-                phase=item.get("status", {}).get("phase", "Unknown"),
-                restarts=_pod_restarts(item),
-                problem=_pod_problem(item),
-            )
-        )
-    return pods
-
-
-def replica_counts(namespace: str, name: str) -> tuple[int, int]:
-    """(desired, available) replica counts for the app's Deployment."""
-    doc = kubectl.get_json("deployment", namespace=namespace, name=name)
-    desired = doc.get("spec", {}).get("replicas", 0)
-    available = doc.get("status", {}).get("availableReplicas", 0)
-    return desired, available
-
-
-def image_pull_fix() -> str:
-    """Context-aware fix suggestion for ImagePullBackOff (PRD §7.2)."""
-    context = kubectl.current_context() or ""
-    if "minikube" in context.lower():
-        return "Run `minikube image load <image>` to make the image visible to the cluster."
-    return "Push the image to a registry the cluster can reach (Docker Hub, GHCR, ECR, etc.)."
+__all__ = [
+    "PodInfo",
+    "image_pull_fix",
+    "list_pods",
+    "replica_counts",
+    "status",
+]
 
 
 def status(
@@ -121,9 +81,9 @@ def status(
         output.step("  (none)")
     for pod in pods:
         output.step(f"  {pod.name}  {pod.phase}  restarts={pod.restarts}")
-        if pod.problem in _IMAGE_PULL_REASONS:
+        if pod.problem in IMAGE_PULL_REASONS:
             output.warn(f"    {pod.problem}: image cannot be pulled.")
             output.step(f"    Fix: {image_pull_fix()}")
-        elif pod.problem in _CRASH_REASONS:
+        elif pod.problem in CRASH_REASONS:
             output.warn(f"    {pod.problem}: container is crashing on start.")
             output.step(f"    Fix: check `kubectl -n {namespace} logs {pod.name}` for the error.")
