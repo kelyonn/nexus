@@ -174,3 +174,15 @@ def delete(
 def namespace_exists(name: str) -> bool:
     result = _run_raw(["get", "namespace", name], timeout=DEFAULT_TIMEOUT)
     return result.returncode == 0
+
+
+def can_i(verb: str, resource: str, *, all_namespaces: bool = False) -> bool:
+    """``kubectl auth can-i <verb> <resource> [-A]`` — True if the current
+    context is allowed. A "no" is a legitimate answer (exit code 1), not an
+    error; only kubectl itself being missing raises (via ``_run_raw``).
+    """
+    args = ["auth", "can-i", verb, resource]
+    if all_namespaces:
+        args.append("-A")
+    result = _run_raw(args, timeout=DEFAULT_TIMEOUT)
+    return result.returncode == 0 and result.stdout.strip().lower() == "yes"

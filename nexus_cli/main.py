@@ -9,10 +9,15 @@ from __future__ import annotations
 import typer
 
 from nexus_cli import __version__
+from nexus_cli.commands.chaos import chaos_app
 from nexus_cli.commands.deploy import deploy as _deploy_command
 from nexus_cli.commands.destroy import destroy as _destroy_command
+from nexus_cli.commands.doctor import doctor as _doctor_command
 from nexus_cli.commands.init import init as _init_command
+from nexus_cli.commands.logs import logs as _logs_command
+from nexus_cli.commands.rollback import rollback as _rollback_command
 from nexus_cli.commands.status import status as _status_command
+from nexus_cli.commands.upgrade import upgrade as _upgrade_command
 from nexus_cli.commands.watch import watch as _watch_command
 
 app = typer.Typer(
@@ -26,6 +31,11 @@ app.command(name="init")(_init_command)
 app.command(name="deploy")(_deploy_command)
 app.command(name="status")(_status_command)
 app.command(name="watch")(_watch_command)
+app.command(name="logs")(_logs_command)
+app.add_typer(chaos_app, name="chaos")
+app.command(name="doctor")(_doctor_command)
+app.command(name="upgrade")(_upgrade_command)
+app.command(name="rollback")(_rollback_command)
 app.command(name="destroy")(_destroy_command)
 
 
