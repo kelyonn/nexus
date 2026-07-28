@@ -15,6 +15,27 @@ const RECOVERY_WINDOW_MS = 20000;
 // 3000:80 -n monitoring` (or NEXT_PUBLIC_GRAFANA_URL pointed at wherever
 // Grafana is reachable); this is a documented manual step, not automated.
 const GRAFANA_BASE = process.env.NEXT_PUBLIC_GRAFANA_URL ?? "http://localhost:3000";
+const GRAFANA_CHECK_INTERVAL_MS = 10000;
+const GRAFANA_CHECK_TIMEOUT_MS = 2000;
+
+// A cross-origin iframe that fails to load (connection refused, nothing
+// port-forwarded) just renders as a blank/broken frame with no error event
+// we can hook into — indistinguishable from "actually broken" to a user who
+// hasn't read the paragraph above it. A lightweight reachability probe lets
+// us show an honest "not reachable, here's the fix" message instead of
+// silently failing. `no-cors` avoids a CORS read (which would fail even
+// when Grafana IS running) — we only care whether the connection succeeds.
+async function isGrafanaReachable(): Promise<boolean> {
+  try {
+    await fetch(`${GRAFANA_BASE}/api/health`, {
+      mode: "no-cors",
+      signal: AbortSignal.timeout(GRAFANA_CHECK_TIMEOUT_MS),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export default function AppDetailPage() {
   const params = useParams<{ name: string }>();
@@ -26,6 +47,23 @@ export default function AppDetailPage() {
   const [chaosMessage, setChaosMessage] = useState<string | null>(null);
   const recoveryUntil = useRef<number>(0);
   const [recoveryActive, setRecoveryActive] = useState(false);
+  const [grafanaReachable, setGrafanaReachable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkGrafana() {
+      const reachable = await isGrafanaReachable();
+      if (!cancelled) setGrafanaReachable(reachable);
+    }
+
+    checkGrafana();
+    const id = setInterval(checkGrafana, GRAFANA_CHECK_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -107,15 +145,20 @@ export default function AppDetailPage() {
 
       <div className="section">
         <h2>Metrics</h2>
-        <p className="muted" style={{ marginBottom: "0.5rem" }}>
-          Requires Grafana reachable at {GRAFANA_BASE} (e.g.{" "}
-          <code>kubectl port-forward svc/kube-prom-stack-grafana 3000:80 -n monitoring</code>).
-        </p>
-        <iframe
-          className="grafana-frame"
-          src={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-availability/${encodeURIComponent(name)}-pod-availability?orgId=1&refresh=10s&kiosk`}
-          title={`${name} Grafana dashboard`}
-        />
+        {grafanaReachable === false && (
+          <p className="error-box" style={{ marginBottom: "0.5rem" }}>
+            Grafana isn&apos;t reachable at {GRAFANA_BASE} — this is expected until you run{" "}
+            <code>kubectl port-forward svc/kube-prom-stack-grafana 3000:80 -n monitoring</code>.
+            The panel below will appear automatically once it is.
+          </p>
+        )}
+        {grafanaReachable !== false && (
+          <iframe
+            className="grafana-frame"
+            src={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-availability/${encodeURIComponent(name)}-pod-availability?orgId=1&refresh=10s&kiosk`}
+            title={`${name} Grafana dashboard`}
+          />
+        )}
         <p style={{ marginTop: "0.5rem" }}>
           <a
             href={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-availability`}
