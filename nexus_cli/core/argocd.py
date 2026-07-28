@@ -31,6 +31,22 @@ class ArgoAppStatus:
     last_sync_time: str | None
 
 
+@dataclass(frozen=True)
+class SyncEvent:
+    """One past sync recorded in the Application's history.
+
+    ArgoCD's history entries carry a git revision and a deployment timestamp,
+    but no per-entry success/failure marker or commit message — those would
+    need a separate lookup against the app's own git repo. The dashboard's
+    GitOps Log (PRD §10.3) pairs this with the Application's *current*
+    sync/health status rather than inventing a per-event status ArgoCD
+    doesn't actually report.
+    """
+
+    revision: str | None
+    deployed_at: str | None
+
+
 def register(rendered_yaml: str) -> None:
     """Apply an ArgoCD Application manifest. Idempotent (kubectl apply)."""
     kubectl.apply_manifest(rendered_yaml)
@@ -88,6 +104,23 @@ def list_managed_apps() -> list[ArgoAppStatus]:
         if name and labels.get(MANAGED_BY_LABEL) == MANAGED_BY_VALUE:
             apps.append(_parse_status(item, name))
     return sorted(apps, key=lambda app: app.name)
+
+
+def sync_history(name: str) -> list[SyncEvent]:
+    """Past syncs for one Application, most recent first.
+
+    Empty if the Application doesn't exist or has never synced — both are
+    ordinary states (a freshly registered app has no history yet), not errors.
+    """
+    try:
+        doc = kubectl.get_json("application", namespace=NAMESPACE, name=name)
+    except NexusError:
+        return []
+    history = doc.get("status", {}).get("history") or []
+    events = [
+        SyncEvent(revision=h.get("revision"), deployed_at=h.get("deployedAt")) for h in history
+    ]
+    return sorted(events, key=lambda e: e.deployed_at or "", reverse=True)
 
 
 def trigger_sync(name: str) -> None:
