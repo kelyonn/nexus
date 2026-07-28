@@ -132,10 +132,21 @@ def apply_manifest(text: str) -> subprocess.CompletedProcess[str]:
     return result
 
 
-_ALREADY_GONE_MARKERS = (
+_MISSING_RESOURCE_TYPE_MARKERS = (
     "doesn't have a resource type",
     "the server could not find the requested resource",
 )
+
+
+def is_missing_resource_type(stderr: str) -> bool:
+    """True if a kubectl error means the *kind* isn't known to the cluster.
+
+    Distinct from "that object doesn't exist": this is the CRD itself not being
+    installed — e.g. asking for an ArgoCD ``Application`` on a cluster where
+    ArgoCD was never installed. Callers usually want to treat it as "there are
+    none of these" rather than as a failure.
+    """
+    return any(m in stderr.lower() for m in _MISSING_RESOURCE_TYPE_MARKERS)
 
 
 def delete(
@@ -161,7 +172,7 @@ def delete(
         args.append("--ignore-not-found=true")
     result = run(args, timeout=APPLY_TIMEOUT, check=False)
     if result.returncode != 0:
-        already_gone = any(m in result.stderr.lower() for m in _ALREADY_GONE_MARKERS)
+        already_gone = is_missing_resource_type(result.stderr)
         if not (ignore_not_found and already_gone):
             raise NexusError(
                 what=f"kubectl delete {resource} {name} failed.",

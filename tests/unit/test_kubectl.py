@@ -266,6 +266,25 @@ def test_delete_raises_on_real_failure_even_with_ignore_not_found_false(
         kubectl.delete("application", "my-app", namespace="argocd", ignore_not_found=False)
 
 
+def test_is_missing_resource_type_recognizes_both_phrasings() -> None:
+    assert kubectl.is_missing_resource_type(
+        'the server doesn\'t have a resource type "application"'
+    )
+    assert kubectl.is_missing_resource_type(
+        "error: the server could not find the requested resource"
+    )
+
+
+def test_is_missing_resource_type_is_case_insensitive() -> None:
+    assert kubectl.is_missing_resource_type("The Server Could Not Find The Requested Resource")
+
+
+def test_is_missing_resource_type_false_for_other_errors() -> None:
+    assert not kubectl.is_missing_resource_type("Unable to connect to the server: i/o timeout")
+    assert not kubectl.is_missing_resource_type('applications "my-app" not found')
+    assert not kubectl.is_missing_resource_type("")
+
+
 def test_namespace_exists_true(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_which(monkeypatch, True)
     monkeypatch.setattr(kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=0))

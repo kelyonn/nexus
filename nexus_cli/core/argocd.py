@@ -18,6 +18,9 @@ NAMESPACE = "argocd"
 DEFAULT_POLL_INTERVAL = 3
 DEFAULT_TIMEOUT = 180
 
+MANAGED_BY_LABEL = "managed-by"
+MANAGED_BY_VALUE = "nexus"
+
 
 @dataclass(frozen=True)
 class ArgoAppStatus:
@@ -33,12 +36,8 @@ def register(rendered_yaml: str) -> None:
     kubectl.apply_manifest(rendered_yaml)
 
 
-def get_status(name: str) -> ArgoAppStatus | None:
-    """Fetch an Application's status, or None if it doesn't exist yet."""
-    try:
-        doc = kubectl.get_json("application", namespace=NAMESPACE, name=name)
-    except NexusError:
-        return None
+def _parse_status(doc: dict, name: str) -> ArgoAppStatus:
+    """Pull the sync/health fields out of one Application document."""
     status = doc.get("status", {})
     sync = status.get("sync", {})
     health = status.get("health", {})
@@ -50,6 +49,45 @@ def get_status(name: str) -> ArgoAppStatus | None:
         revision=sync.get("revision"),
         last_sync_time=operation_state.get("finishedAt"),
     )
+
+
+def get_status(name: str) -> ArgoAppStatus | None:
+    """Fetch an Application's status, or None if it doesn't exist yet."""
+    try:
+        doc = kubectl.get_json("application", namespace=NAMESPACE, name=name)
+    except NexusError:
+        return None
+    return _parse_status(doc, name)
+
+
+def list_managed_apps() -> list[ArgoAppStatus]:
+    """Every Nexus-managed Application, sorted by name (PRD §10.1).
+
+    This is the dashboard's app-discovery mechanism: the CLI operates on one
+    app at a time, but every Application it registers carries the
+    ``managed-by: nexus`` label (see ``templates/argocd-app.yaml.j2``), so
+    listing by that label is what makes a multi-app overview possible.
+
+    A cluster with no ArgoCD at all returns ``[]`` rather than raising — the
+    Application CRD being absent is a legitimate "there are no Nexus apps"
+    answer. Any *other* failure (cluster unreachable, RBAC denied) still
+    raises, so a real problem is never silently reported as an empty list.
+    """
+    try:
+        doc = kubectl.get_json("application", namespace=NAMESPACE)
+    except NexusError as err:
+        if kubectl.is_missing_resource_type(err.why or ""):
+            return []
+        raise
+
+    apps = []
+    for item in doc.get("items", []):
+        metadata = item.get("metadata", {})
+        labels = metadata.get("labels") or {}
+        name = metadata.get("name")
+        if name and labels.get(MANAGED_BY_LABEL) == MANAGED_BY_VALUE:
+            apps.append(_parse_status(item, name))
+    return sorted(apps, key=lambda app: app.name)
 
 
 def trigger_sync(name: str) -> None:
