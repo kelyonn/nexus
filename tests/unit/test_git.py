@@ -260,6 +260,16 @@ def test_git_not_installed_raises_nexus_error(monkeypatch: pytest.MonkeyPatch) -
 
 def _real_init(path: Path, *, branch: str = "main") -> None:
     subprocess.run(["git", "init", "-b", branch, str(path)], capture_output=True, check=True)
+    # Give the throwaway repo its own identity. Not cosmetic: `git.revert()`
+    # *creates* a commit, so without an identity it fails outright on any
+    # machine with no global git config — e.g. a CI runner, which is exactly
+    # where this first showed up. Configuring it here also matches reality
+    # (a real user's repo always has one) and keeps these tests hermetic
+    # instead of silently depending on the developer's global git config.
+    for key, value in (("user.email", "t@t.local"), ("user.name", "t")):
+        subprocess.run(
+            ["git", "-C", str(path), "config", key, value], capture_output=True, check=True
+        )
 
 
 def test_current_branch_real_repo_with_no_commits_yet(tmp_path: Path) -> None:
