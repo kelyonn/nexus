@@ -10,14 +10,16 @@ chaos testing (Chaos Mesh) on **your own cluster**, without a DevOps team.
 
 ## Status
 
-✅ **Phase 1 (core CLI) is done.** `nexus init`, `deploy`, `status`, `watch`,
-and `destroy` all exist and are verified against a real Minikube cluster —
-installing ArgoCD, deploying an app, checking its health, streaming its pod
-events, and tearing it down again, twice each way to confirm idempotency.
+✅ **Phase 1 + Phase 2 (the full CLI) are done.** All ten commands —
+`init`, `deploy`, `status`, `watch`, `destroy`, `logs`, `chaos run`/`chaos
+schedule`, `doctor`, `upgrade`, and `rollback` — exist and are verified
+against real clusters (Minikube and Kind): deploying an app, streaming logs
+and pod events, killing a pod and watching it recover, diagnosing a broken
+environment, bumping an image through GitOps, and rolling it back through
+`git revert` — proven to survive ArgoCD's self-heal, not just claimed to.
 
-Not yet built: `chaos`, `logs`, `upgrade`, `rollback`, `doctor` (Phase 2), and
-the dashboard (Phase 3). Not yet published to PyPI/Homebrew — install from
-source for now (see [Try it](#try-it) below).
+Not yet published to PyPI/Homebrew — install from source for now (see
+[Try it](#try-it) below). The dashboard (Phase 3) hasn't been built yet.
 
 The original manifest-based demo that inspired the CLI still lives — runnable —
 in [legacy/](legacy/README.md).
@@ -54,11 +56,11 @@ mockup — see [Try it](#try-it) to run it yourself.
 
 ## Try it
 
-Requires Python 3.10+, Docker, and [Minikube](https://minikube.sigs.k8s.io/).
+Requires Python 3.10+, Docker, and [Minikube](https://minikube.sigs.k8s.io/)
+(or [Kind](https://kind.sigs.k8s.io/)).
 
 ```bash
 git clone https://github.com/kelyonn/nexus.git && cd nexus
-git checkout week-1-foundation      # Phase 1 lives here until it merges to main
 
 python3 -m venv venv && source venv/bin/activate
 pip install -e ".[dev]"
@@ -69,18 +71,23 @@ cd examples/flask-demo
 nexus deploy      # installs ArgoCD + monitoring, deploys the app — type y
 nexus status        # replicas, pods, ArgoCD sync/health
 nexus watch          # live pod events, Ctrl+C to stop
-nexus destroy        # type the app name to confirm
+nexus logs            # tail every pod's logs, prefixed by pod name
+nexus chaos run        # kill one pod, watch it recover
+nexus doctor             # environment diagnostics — every problem, with a fix
+nexus destroy              # type the app name to confirm
 ```
 
 `nexus deploy` is safe to run more than once — it skips components that are
-already installed and never duplicates resources.
+already installed and never duplicates resources. `nexus upgrade --image
+<tag>` and `nexus rollback` also exist but need a real git remote to push to
+(see [INSTALLATION.md](INSTALLATION.md) if you want to try those).
 
 ## Repository map
 
 ```
-nexus_cli/     The Python package (Typer CLI) — Phase 1 core commands done
+nexus_cli/     The Python package (Typer CLI) — the full command suite
 examples/      Sample apps for demos and e2e tests (flask-demo, live-tested)
-tests/         176 unit tests (99% core coverage); integration tests: Phase 2
+tests/         268 unit tests (98% core coverage) + a Kind-based integration suite
 legacy/        The original hand-written GitOps demo (archived, read-only)
 ```
 
@@ -95,7 +102,7 @@ demo is exactly the output `nexus deploy` will produce automatically.
 
 ## Contributing
 
-PRs welcome once Phase 1 scaffolding lands. Please include what changed, why,
+PRs welcome. Please include what changed, why,
 and how you tested it. Development setup: [INSTALLATION.md](INSTALLATION.md).
 
 ## License
