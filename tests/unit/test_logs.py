@@ -9,7 +9,7 @@ import pytest
 from kubernetes.client.exceptions import ApiException
 from typer.testing import CliRunner
 
-from nexus_cli.commands import logs as logs_module
+from nexus_cli.core import logs as core_logs
 from nexus_cli.core import preflight
 from nexus_cli.core.output import NexusError
 from nexus_cli.main import app
@@ -47,7 +47,7 @@ def _setup_common(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_config(tmp_path)
     monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
-    monkeypatch.setattr(logs_module.k8s_config, "load_kube_config", lambda: None)
+    monkeypatch.setattr(core_logs.k8s_config, "load_kube_config", lambda: None)
 
 
 def test_logs_preflight_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -71,7 +71,7 @@ def test_logs_kubeconfig_load_failure(tmp_path: Path, monkeypatch: pytest.Monkey
     def raise_err() -> None:
         raise RuntimeError("no kubeconfig")
 
-    monkeypatch.setattr(logs_module.k8s_config, "load_kube_config", raise_err)
+    monkeypatch.setattr(core_logs.k8s_config, "load_kube_config", raise_err)
     result = runner.invoke(app, ["logs"])
     assert result.exit_code != 0
     assert "Could not load a Kubernetes config" in result.output
@@ -94,7 +94,7 @@ def test_logs_prefixes_lines_by_pod(tmp_path: Path, monkeypatch: pytest.MonkeyPa
             )
         ),
     )
-    monkeypatch.setattr(logs_module.k8s_client, "CoreV1Api", lambda: fake_api)
+    monkeypatch.setattr(core_logs.k8s_client, "CoreV1Api", lambda: fake_api)
 
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 0, result.output
@@ -121,7 +121,7 @@ def test_logs_respects_tail_flag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         list_namespaced_pod=lambda namespace, label_selector=None: pods,
         read_namespaced_pod_log=read_log,
     )
-    monkeypatch.setattr(logs_module.k8s_client, "CoreV1Api", lambda: fake_api)
+    monkeypatch.setattr(core_logs.k8s_client, "CoreV1Api", lambda: fake_api)
 
     result = runner.invoke(app, ["logs", "--tail", "5"])
     assert result.exit_code == 0, result.output
@@ -138,7 +138,7 @@ def test_logs_no_pods_found(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
             lambda name, namespace, tail_lines=None, _preload_content=True: _fake_response("")
         ),
     )
-    monkeypatch.setattr(logs_module.k8s_client, "CoreV1Api", lambda: fake_api)
+    monkeypatch.setattr(core_logs.k8s_client, "CoreV1Api", lambda: fake_api)
 
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 0, result.output
@@ -163,7 +163,7 @@ def test_logs_continues_after_one_pod_errors(
         list_namespaced_pod=lambda namespace, label_selector=None: pods,
         read_namespaced_pod_log=read_log,
     )
-    monkeypatch.setattr(logs_module.k8s_client, "CoreV1Api", lambda: fake_api)
+    monkeypatch.setattr(core_logs.k8s_client, "CoreV1Api", lambda: fake_api)
 
     result = runner.invoke(app, ["logs"])
     assert result.exit_code == 0, result.output
