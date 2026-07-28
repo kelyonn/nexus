@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from nexus_cli.core import helm, kubectl
 from nexus_cli.core.output import NexusError
 
-_FIX = {
+FIX = {
     "kubectl": "Install it: https://kubernetes.io/docs/tasks/tools/#kubectl",
     "helm": "Install it: https://helm.sh/docs/intro/install/",
     "cluster": "Check `kubectl config current-context` and `kubectl cluster-info`.",
@@ -64,5 +64,5 @@ def ensure_cluster_ready(*, require_helm: bool = False) -> None:
             raise NexusError(
                 what=f"{c.detail}.",
                 why="Nexus needs this before it can talk to your cluster.",
-                fix=_FIX[c.name],
+                fix=FIX[c.name],
             )

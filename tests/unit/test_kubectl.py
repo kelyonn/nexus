@@ -276,3 +276,43 @@ def test_namespace_exists_false(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_which(monkeypatch, True)
     monkeypatch.setattr(kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=1))
     assert kubectl.namespace_exists("my-app") is False
+
+
+def test_can_i_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> _FakeCompleted:
+        captured["args"] = args
+        return _FakeCompleted(returncode=0, stdout="yes\n")
+
+    monkeypatch.setattr(kubectl.subprocess, "run", fake_run)
+    assert kubectl.can_i("create", "namespaces") is True
+    assert captured["args"] == ["kubectl", "auth", "can-i", "create", "namespaces"]
+
+
+def test_can_i_false_on_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(
+        kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=1, stdout="no\n")
+    )
+    assert kubectl.can_i("create", "namespaces") is False
+
+
+def test_can_i_all_namespaces_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> _FakeCompleted:
+        captured["args"] = args
+        return _FakeCompleted(returncode=0, stdout="yes\n")
+
+    monkeypatch.setattr(kubectl.subprocess, "run", fake_run)
+    kubectl.can_i("create", "deployments", all_namespaces=True)
+    assert captured["args"] == ["kubectl", "auth", "can-i", "create", "deployments", "-A"]
+
+
+def test_can_i_raises_when_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, False)
+    with pytest.raises(NexusError, match="not installed"):
+        kubectl.can_i("create", "namespaces")
