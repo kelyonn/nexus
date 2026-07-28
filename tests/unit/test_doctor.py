@@ -1,0 +1,180 @@
+"""Tests for `nexus doctor` (PRD §12, §15)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from typer.testing import CliRunner
+
+from nexus_cli.commands import doctor as doctor_module
+from nexus_cli.main import app
+
+runner = CliRunner()
+
+VALID_YAML = """
+app:
+  name: my-app
+  image: myrepo/app:latest
+  port: 8080
+  healthPath: /health
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def _write_config(tmp_path: Path) -> Path:
+    p = tmp_path / "nexus.yaml"
+    p.write_text(VALID_YAML)
+    return p
+
+
+def _healthy_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(doctor_module.kubectl, "version_client", lambda: "v1.29.0")
+    monkeypatch.setattr(doctor_module.helm, "version", lambda: "v3.14.1")
+    monkeypatch.setattr(doctor_module.kubectl, "current_context", lambda: "minikube")
+    monkeypatch.setattr(doctor_module.kubectl, "cluster_reachable", lambda: True)
+
+
+def test_doctor_all_green(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "Everything looks good" in result.output
+    assert "ArgoCD installed" in result.output
+
+
+def test_doctor_missing_kubectl_reports_fix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(doctor_module.kubectl, "version_client", lambda: None)
+    monkeypatch.setattr(doctor_module.helm, "version", lambda: "v3.14.1")
+    monkeypatch.setattr(doctor_module.kubectl, "current_context", lambda: None)
+    monkeypatch.setattr(doctor_module.kubectl, "cluster_reachable", lambda: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "kubectl not found" in result.output
+    assert "Install it: https://kubernetes.io/docs/tasks/tools/#kubectl" in result.output
+    assert "problem(s) found" in result.output
+
+
+def test_doctor_skips_rbac_when_cluster_unreachable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(doctor_module.kubectl, "version_client", lambda: "v1.29.0")
+    monkeypatch.setattr(doctor_module.helm, "version", lambda: "v3.14.1")
+    monkeypatch.setattr(doctor_module.kubectl, "current_context", lambda: None)
+    monkeypatch.setattr(doctor_module.kubectl, "cluster_reachable", lambda: False)
+
+    called = {"can_i": False}
+
+    def spy_can_i(*a: object, **k: object) -> bool:
+        called["can_i"] = True
+        return True
+
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", spy_can_i)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert called["can_i"] is False
+    assert "Platform components" not in result.output
+
+
+def test_doctor_reports_missing_rbac_permissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(
+        doctor_module.kubectl,
+        "can_i",
+        lambda verb, resource, **k: not (verb == "create" and resource == "namespaces"),
+    )
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "cannot create namespaces" in result.output
+
+
+def test_doctor_no_config_reports_fix_but_continues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "No nexus.yaml found" in result.output
+    assert "nexus init" in result.output
+    # No config means no git check should have run at all.
+    assert "git OK" not in result.output and "not a git repository" not in result.output
+
+
+def test_doctor_invalid_config_reports_validation_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "nexus.yaml").write_text("app:\n  name: Bad_Name\n")
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "Invalid nexus.yaml" in result.output
+    assert "app.name" in result.output  # field-level detail, not just "invalid"
+
+
+def test_doctor_reports_branch_mismatch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "not-main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "not-main" in result.output and "platform.branch" in result.output
+
+
+def test_doctor_reports_not_a_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: False)
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "not a git repository" in result.output
+
+
+def test_doctor_platform_components_not_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: False)
+
+    result = runner.invoke(app, ["doctor"])
+    assert "Chaos Mesh not installed" in result.output
