@@ -10,6 +10,7 @@ import typer
 
 from nexus_cli import __version__
 from nexus_cli.commands.chaos import chaos_app
+from nexus_cli.commands.dashboard import dashboard as _dashboard_command
 from nexus_cli.commands.deploy import deploy as _deploy_command
 from nexus_cli.commands.destroy import destroy as _destroy_command
 from nexus_cli.commands.doctor import doctor as _doctor_command
@@ -37,6 +38,7 @@ app.command(name="doctor")(_doctor_command)
 app.command(name="upgrade")(_upgrade_command)
 app.command(name="rollback")(_rollback_command)
 app.command(name="destroy")(_destroy_command)
+app.command(name="dashboard")(_dashboard_command)
 
 
 def _version_callback(value: bool) -> None:
