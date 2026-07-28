@@ -9,6 +9,7 @@ from __future__ import annotations
 import typer
 
 from nexus_cli import __version__
+from nexus_cli.commands.chaos import chaos_app
 from nexus_cli.commands.deploy import deploy as _deploy_command
 from nexus_cli.commands.destroy import destroy as _destroy_command
 from nexus_cli.commands.init import init as _init_command
@@ -28,6 +29,7 @@ app.command(name="deploy")(_deploy_command)
 app.command(name="status")(_status_command)
 app.command(name="watch")(_watch_command)
 app.command(name="logs")(_logs_command)
+app.add_typer(chaos_app, name="chaos")
 app.command(name="destroy")(_destroy_command)
 
 
