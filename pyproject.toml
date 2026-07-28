@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "nexus-platform"
+name = "nexus-gitops"
 description = "GitOps platform CLI: production-grade Kubernetes for any app, from one nexus.yaml."
 readme = "README.md"
 requires-python = ">=3.10"
