@@ -57,4 +57,10 @@ module = "kubernetes.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Deliberately unit-only by default: tests/integration/ needs a real cluster
+# and can take minutes, unlike the ~1s unit suite. Run it explicitly with
+# `pytest tests/integration`.
+testpaths = ["tests/unit"]
+markers = [
+    "chaos: needs Chaos Mesh on the cluster (tests/integration only); run explicitly with -m chaos",
+]
