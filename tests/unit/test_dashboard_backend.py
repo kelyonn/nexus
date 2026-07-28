@@ -86,6 +86,18 @@ def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
     assert resp.json()[0]["available_replicas"] == 0
 
 
+def test_list_apps_surfaces_cluster_failure_as_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A real failure (cluster unreachable) must not become a bare 500 with no message."""
+
+    def raise_unreachable() -> list[argocd.ArgoAppStatus]:
+        raise NexusError(what="kubectl get application failed.", why="connection refused")
+
+    monkeypatch.setattr(argocd, "list_managed_apps", raise_unreachable)
+    resp = client.get("/api/apps")
+    assert resp.status_code == 502
+    assert "connection refused" in resp.json()["detail"]
+
+
 def test_list_apps_empty(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(argocd, "list_managed_apps", lambda: [])
     resp = client.get("/api/apps")
