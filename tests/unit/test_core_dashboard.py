@@ -155,6 +155,55 @@ def test_start_frontend_runs_npm_dev_in_frontend_dir(monkeypatch: pytest.MonkeyP
     assert captured["start_new_session"] is True
 
 
+# --- grafana_available / start_grafana_port_forward ---
+
+
+def test_grafana_available_true_when_service_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"kind": "Service"})
+    assert dashboard.grafana_available() is True
+
+
+def test_grafana_available_false_when_service_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what="services \"kube-prom-stack-grafana\" not found")
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.grafana_available() is False
+
+
+def test_start_grafana_port_forward_returns_none_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "grafana_available", lambda: False)
+    assert dashboard.start_grafana_port_forward() is None
+
+
+def test_start_grafana_port_forward_launches_kubectl_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "grafana_available", lambda: True)
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured["args"] = args
+        captured.update(kwargs)
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    result = dashboard.start_grafana_port_forward()
+
+    assert result == "fake-proc"
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/kube-prom-stack-grafana",
+        "3000:80",
+        "-n",
+        "monitoring",
+    ]
+    assert captured["start_new_session"] is True
+
+
 # --- wait_for_backend_ready ---
 
 
