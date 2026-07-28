@@ -67,8 +67,16 @@ def _app_or_404(name: str) -> argocd.ArgoAppStatus:
 @router.get("/apps", response_model=list[AppSummary])
 def list_apps() -> list[AppSummary]:
     """Overview grid data (PRD §10.1): one card per Nexus-managed app."""
+    try:
+        managed_apps = argocd.list_managed_apps()
+    except NexusError as err:
+        # A real failure here (cluster unreachable, RBAC denied) must reach the
+        # user as a stated problem, not a bare 500 — PRD §12's what/why/fix bar
+        # applies to this API too, not just the CLI's own error output.
+        raise HTTPException(status_code=502, detail=str(err)) from err
+
     summaries = []
-    for app in argocd.list_managed_apps():
+    for app in managed_apps:
         try:
             desired, available = core_status.replica_counts(app.name, app.name)
         except NexusError:
