@@ -32,6 +32,9 @@ dashboard = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.32",
 ]
+docs = [
+    "mkdocs-material>=9",
+]
 
 [project.scripts]
 nexus = "nexus_cli.main:app"

@@ -98,6 +98,18 @@ All notable changes to Nexus are documented here. Format based on
   user-time one for running `pip install`. `/apps/[name]` became `/apps?name=`
   (a static export can't serve arbitrary dynamic segments) with no change to
   what the page shows.
+- Docs site (`docs_site/`, MkDocs Material, deployed to GitHub Pages via
+  `.github/workflows/docs.yml`): install/quickstart, a command reference
+  generated from real `--help` output, the full `nexus.yaml` schema, an
+  architecture overview, and a troubleshooting page seeded from real bugs
+  hit during development (ImagePullBackOff on Minikube, the ArgoCD health
+  quirk, the branch-mismatch soft-skip, the Chaos Mesh webhook race) rather
+  than a hypothetical FAQ. Cloud quick-starts for EKS/GKE/AKS are included
+  but explicitly labeled untested — everything else on the site has been
+  live-verified against Minikube/Kind. `docs_site/` is the site's source;
+  this repo's own `docs/` remains a separate, gitignored, local-only
+  directory and is not published. `CONTRIBUTING.md`, issue templates
+  (bug report / feature request), and a PR template were also added.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git

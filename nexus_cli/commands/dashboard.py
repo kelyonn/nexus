@@ -40,7 +40,7 @@ def _start_optional_port_forward(
 
 
 def dashboard() -> None:
-    """Launch the dashboard backend + frontend and open it in your browser."""
+    """Launch the local dashboard and open it in your browser."""
     try:
         core_dashboard.check_dashboard_deps_installed()
         core_dashboard.check_backend_source_present()
