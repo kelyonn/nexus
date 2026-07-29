@@ -47,8 +47,32 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
 
-      - name: Install dependencies
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install frontend dependencies
         run: npm ci
+
+      - name: Install backend dependencies (for type generation below)
+        working-directory: .
+        run: pip install -e ".[dashboard]"
+
+      # scripts/generate_dashboard_types.py's whole point (PRD-adjacent: no
+      # spec section for it, but the same "CLI and dashboard can't silently
+      # disagree" principle everything else in dashboard/backend follows) —
+      # regenerate and fail if that changes anything, so a Pydantic model
+      # edited without regenerating types is caught here, not by a user
+      # hitting a runtime type mismatch.
+      - name: Generated dashboard types are up to date
+        working-directory: .
+        run: |
+          python3 scripts/generate_dashboard_types.py
+          git diff --exit-code dashboard/frontend/lib/api.generated.ts || {
+            echo "::error::dashboard/frontend/lib/api.generated.ts is stale — run 'python3 scripts/generate_dashboard_types.py' and commit the result."
+            exit 1
+          }
 
       - name: ESLint
         run: npx eslint .
