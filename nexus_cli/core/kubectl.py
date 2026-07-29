@@ -149,6 +149,19 @@ def is_missing_resource_type(stderr: str) -> bool:
     return any(m in stderr.lower() for m in _MISSING_RESOURCE_TYPE_MARKERS)
 
 
+def is_not_found(stderr: str) -> bool:
+    """True if a kubectl error means *this object* doesn't exist.
+
+    The complement of :func:`is_missing_resource_type`: the kind is known, the
+    named object (or its namespace) just isn't there — e.g. asking for a
+    Deployment before ``nexus deploy`` has created it. Callers usually want to
+    treat this as an ordinary "nothing yet" state, while still surfacing every
+    *other* failure (RBAC denied, cluster unreachable) as a real problem.
+    """
+    lowered = stderr.lower()
+    return "notfound" in lowered.replace(" ", "") or "not found" in lowered
+
+
 def delete(
     resource: str,
     name: str,

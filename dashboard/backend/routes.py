@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from dashboard.backend.auth import require_token
-from nexus_cli.core import argocd
+from nexus_cli.core import argocd, kubectl
 from nexus_cli.core import chaos as core_chaos
 from nexus_cli.core import status as core_status
 from nexus_cli.core.output import NexusError
@@ -79,9 +79,14 @@ def list_apps() -> list[AppSummary]:
     for app in managed_apps:
         try:
             desired, available = core_status.replica_counts(app.name, app.name)
-        except NexusError:
-            # Namespace/Deployment not up yet (e.g. registered but not synced) —
-            # still a real app worth listing, just with nothing running.
+        except NexusError as err:
+            # A Deployment that doesn't exist yet (registered with ArgoCD but
+            # not synced) is an ordinary state — show the app with nothing
+            # running. Anything else (RBAC denied, cluster unreachable) is a
+            # real failure, and reporting it as "0 replicas" would be a lie
+            # that looks exactly like a scaled-down app.
+            if not kubectl.is_not_found(err.why or ""):
+                raise HTTPException(status_code=502, detail=str(err)) from err
             desired, available = 0, 0
         summaries.append(
             AppSummary(

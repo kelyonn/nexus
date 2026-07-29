@@ -76,7 +76,10 @@ def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
     monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
 
     def raise_not_found(namespace: str, name: str) -> tuple[int, int]:
-        raise NexusError(what="deployment not found")
+        raise NexusError(
+            what="kubectl get deployment failed.",
+            why='Error from server (NotFound): deployments.apps "my-app" not found',
+        )
 
     monkeypatch.setattr(core_status, "replica_counts", raise_not_found)
 
@@ -84,6 +87,27 @@ def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
     assert resp.status_code == 200
     assert resp.json()[0]["desired_replicas"] == 0
     assert resp.json()[0]["available_replicas"] == 0
+
+
+def test_list_apps_does_not_disguise_rbac_failure_as_zero_replicas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """"0 replicas" looks identical to a scaled-down app — a permissions
+    failure must surface as an error instead of that lie.
+    """
+    monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
+
+    def raise_forbidden(namespace: str, name: str) -> tuple[int, int]:
+        raise NexusError(
+            what="kubectl get deployment failed.",
+            why="deployments.apps is forbidden: User cannot get resource",
+        )
+
+    monkeypatch.setattr(core_status, "replica_counts", raise_forbidden)
+
+    resp = client.get("/api/apps")
+    assert resp.status_code == 502
+    assert "forbidden" in resp.json()["detail"]
 
 
 def test_list_apps_surfaces_cluster_failure_as_502(monkeypatch: pytest.MonkeyPatch) -> None:
