@@ -128,6 +128,39 @@ def test_status_detects_image_pull_backoff(tmp_path: Path, monkeypatch: pytest.M
     assert result.exit_code == 0, result.output
     assert "ImagePullBackOff" in result.output
     assert "minikube image load" in result.output
+    # default imagePullPolicy is Always — the fix must say the load alone
+    # won't help, since the kubelet re-checks the registry regardless.
+    assert "IfNotPresent" in result.output
+
+
+def test_status_image_pull_backoff_fix_is_concise_when_already_if_not_present(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    p = tmp_path / "nexus.yaml"
+    p.write_text(
+        VALID_YAML.replace(
+            "healthPath: /health", "healthPath: /health\n  imagePullPolicy: IfNotPresent"
+        )
+    )
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+    monkeypatch.setattr(kubectl, "namespace_exists", lambda ns: True)
+    monkeypatch.setattr(status_module, "replica_counts", lambda ns, name: (2, 0))
+    monkeypatch.setattr(argocd, "get_status", lambda name: None)
+    monkeypatch.setattr(
+        status_module,
+        "list_pods",
+        lambda ns: [
+            status_module.PodInfo(
+                name="my-app-abc", phase="Pending", restarts=0, problem="ImagePullBackOff"
+            )
+        ],
+    )
+    monkeypatch.setattr(kubectl, "current_context", lambda: "minikube")
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert "minikube image load" in result.output
+    assert "IfNotPresent" not in result.output  # already set — nothing to tell them to change
 
 
 def test_status_detects_crash_loop_backoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -19,7 +19,7 @@ spec:
       containers:
       - name: {{ app.name }}
         image: {{ app.image }}
-        imagePullPolicy: Always
+        imagePullPolicy: {{ app.imagePullPolicy }}
         ports:
         - containerPort: {{ app.port }}
 {% if app.env %}

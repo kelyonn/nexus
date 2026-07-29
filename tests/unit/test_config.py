@@ -44,6 +44,7 @@ def test_minimal_valid_config_loads_with_defaults(tmp_path: Path) -> None:
     assert cfg.platform.monitoring is True
     assert cfg.platform.chaos is False
     assert cfg.platform.chaosSchedule == "*/30 * * * *"
+    assert cfg.app.imagePullPolicy == "Always"  # default
 
 
 def test_full_valid_config_loads(tmp_path: Path) -> None:
@@ -172,6 +173,20 @@ def test_invalid_health_path_missing_leading_slash(tmp_path: Path) -> None:
 
 def test_invalid_stack_value(tmp_path: Path) -> None:
     app = {**VALID_APP, "stack": "rails"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_valid_image_pull_policy_if_not_present(tmp_path: Path) -> None:
+    app = {**VALID_APP, "imagePullPolicy": "IfNotPresent"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.imagePullPolicy == "IfNotPresent"
+
+
+def test_invalid_image_pull_policy(tmp_path: Path) -> None:
+    app = {**VALID_APP, "imagePullPolicy": "Sometimes"}
     p = _write(tmp_path, app, VALID_PLATFORM)
     with pytest.raises(NexusError):
         config.load(p)

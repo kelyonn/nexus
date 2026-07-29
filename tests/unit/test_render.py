@@ -253,6 +253,16 @@ def test_podchaos_matches_legacy_structure_except_blast_radius(
 # --- rendering with a different app.name produces a fully consistent set ---
 
 
+def test_image_pull_policy_propagates_to_deployment(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.imagePullPolicy = "IfNotPresent"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert container["imagePullPolicy"] == "IfNotPresent"
+
+
 def test_different_app_name_is_consistent_across_all_templates(
     flask_demo_config: config.NexusConfig,
 ) -> None:
