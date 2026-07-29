@@ -8,6 +8,7 @@ report instead of one error per re-run.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -119,6 +120,30 @@ def _check_git(cfg: NexusConfig) -> DoctorCheck:
     return DoctorCheck("git", True, f"git OK — branch '{branch}', remote '{remote}'")
 
 
+def _check_registry(cfg: NexusConfig) -> DoctorCheck | None:
+    """Only runs when app.registry is set. Checks *presence*, never prints
+    values — a doctor report is exactly the kind of thing that ends up
+    pasted into a bug report or a chat message, and this project never puts
+    credentials in nexus.yaml in the first place (see core/registry.py); it
+    shouldn't leak them into a diagnostic report either.
+    """
+    if cfg.app.registry is None:
+        return None
+    missing = [
+        env_name
+        for env_name in (cfg.app.registry.usernameEnv, cfg.app.registry.passwordEnv)
+        if not os.environ.get(env_name)
+    ]
+    if missing:
+        return DoctorCheck(
+            "registry",
+            False,
+            f"Registry credential env var(s) not set: {', '.join(missing)}",
+            f"Set {' and '.join(missing)} in your shell before running `nexus deploy`.",
+        )
+    return DoctorCheck("registry", True, "Registry credential env vars are set")
+
+
 def _platform_status() -> list[tuple[str, str, bool]]:
     return [
         (label, namespace, helm.release_exists(release, namespace))
@@ -146,6 +171,9 @@ def doctor(
     checks.append(config_check)
     if cfg is not None:
         checks.append(_check_git(cfg))
+        registry_check = _check_registry(cfg)
+        if registry_check is not None:
+            checks.append(registry_check)
 
     for c in checks:
         if c.passed:

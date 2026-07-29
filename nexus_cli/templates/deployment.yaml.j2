@@ -16,6 +16,10 @@ spec:
       labels:
         app: {{ app.name }}
     spec:
+{% if app.registry %}
+      imagePullSecrets:
+      - name: {{ app.registry_secret_name }}
+{% endif %}
       containers:
       - name: {{ app.name }}
         image: {{ app.image }}

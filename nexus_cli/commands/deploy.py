@@ -59,7 +59,7 @@ from pathlib import Path
 
 import typer
 
-from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, render
+from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, registry, render
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core.config import NexusConfig
 
@@ -153,6 +153,16 @@ def apply_app_manifests(cfg: NexusConfig) -> None:
         if name == "argocd-app":
             continue
         kubectl.apply_manifest(text)
+
+
+def apply_registry_secret(cfg: NexusConfig) -> None:
+    """Create/update the app's imagePullSecret, if ``app.registry`` is set.
+
+    Must run *after* ``apply_app_manifests`` — the Secret is namespaced to
+    the app's own namespace, which that step is what creates. A no-op when
+    ``app.registry`` is unset (most apps).
+    """
+    registry.apply_pull_secret(cfg.app)
 
 
 def sync_manifests_to_git(cfg: NexusConfig) -> str:
@@ -284,6 +294,14 @@ def deploy(
     plan.append(
         (f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg), True)
     )
+    if cfg.app.registry is not None:
+        plan.append(
+            (
+                f"Create imagePullSecret → {cfg.app.registry_secret_name}",
+                lambda: apply_registry_secret(cfg),
+                True,
+            )
+        )
     plan.append(
         (
             f"Commit manifests to Git → {MANIFESTS_DIR}/",
