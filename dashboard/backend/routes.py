@@ -33,6 +33,7 @@ class PodSummary(BaseModel):
     phase: str
     restarts: int
     problem: str | None
+    created_at: str | None
 
 
 class ChaosRequest(BaseModel):
@@ -110,7 +111,10 @@ def list_pods(name: str) -> list[PodSummary]:
     except NexusError as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
     return [
-        PodSummary(name=p.name, phase=p.phase, restarts=p.restarts, problem=p.problem)
+        PodSummary(
+            name=p.name, phase=p.phase, restarts=p.restarts, problem=p.problem,
+            created_at=p.created_at,
+        )
         for p in pods
     ]
 

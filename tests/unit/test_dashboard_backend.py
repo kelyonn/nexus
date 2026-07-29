@@ -144,13 +144,25 @@ def test_list_pods_returns_pod_data(monkeypatch: pytest.MonkeyPatch) -> None:
         core_status,
         "list_pods",
         lambda ns: [
-            core_status.PodInfo(name="my-app-abc", phase="Running", restarts=0, problem=None)
+            core_status.PodInfo(
+                name="my-app-abc",
+                phase="Running",
+                restarts=0,
+                problem=None,
+                created_at="2026-01-01T00:00:00Z",
+            )
         ],
     )
     resp = client.get("/api/apps/my-app/pods")
     assert resp.status_code == 200
     assert resp.json() == [
-        {"name": "my-app-abc", "phase": "Running", "restarts": 0, "problem": None}
+        {
+            "name": "my-app-abc",
+            "phase": "Running",
+            "restarts": 0,
+            "problem": None,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
     ]
 
 

@@ -23,6 +23,7 @@ class PodInfo:
     phase: str
     restarts: int
     problem: str | None
+    created_at: str | None = None  # RFC3339, straight from the pod's creationTimestamp
 
 
 def _pod_problem(pod: dict) -> str | None:
@@ -49,6 +50,7 @@ def list_pods(namespace: str) -> list[PodInfo]:
                 phase=item.get("status", {}).get("phase", "Unknown"),
                 restarts=_pod_restarts(item),
                 problem=_pod_problem(item),
+                created_at=item.get("metadata", {}).get("creationTimestamp"),
             )
         )
     return pods
