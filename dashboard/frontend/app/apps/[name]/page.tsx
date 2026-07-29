@@ -10,10 +10,12 @@ const RECOVERY_POLL_MS = 1000;
 const RECOVERY_WINDOW_MS = 20000;
 
 // Grafana isn't exposed outside the cluster by `nexus deploy` — doing so
-// would need an Ingress/NodePort decision this project hasn't made. The
-// panel below expects a `kubectl port-forward svc/kube-prom-stack-grafana
-// 3000:80 -n monitoring` (or NEXT_PUBLIC_GRAFANA_URL pointed at wherever
-// Grafana is reachable); this is a documented manual step, not automated.
+// would need an Ingress/NodePort decision this project hasn't made. Instead
+// `nexus dashboard` starts a `kubectl port-forward` to it automatically (see
+// core/dashboard.start_grafana_port_forward), so these panels normally just
+// work. The message below is the fallback for when they don't: no Grafana on
+// the cluster, the forward died, or the dashboard was started some other way.
+// Point NEXT_PUBLIC_GRAFANA_URL elsewhere to override the target.
 const GRAFANA_BASE = process.env.NEXT_PUBLIC_GRAFANA_URL ?? "http://localhost:3000";
 const GRAFANA_CHECK_INTERVAL_MS = 10000;
 const GRAFANA_CHECK_TIMEOUT_MS = 2000;
@@ -159,9 +161,11 @@ export default function AppDetailPage() {
         <h2>Metrics</h2>
         {grafanaReachable === false && (
           <p className="error-box" style={{ marginBottom: "0.5rem" }}>
-            Grafana isn&apos;t reachable at {GRAFANA_BASE} — this is expected until you run{" "}
+            Grafana isn&apos;t reachable at {GRAFANA_BASE}. <code>nexus dashboard</code> normally
+            port-forwards it for you — if monitoring isn&apos;t installed on this cluster, or you
+            started the dashboard another way, run{" "}
             <code>kubectl port-forward svc/kube-prom-stack-grafana 3000:80 -n monitoring</code>.
-            The panel below will appear automatically once it is.
+            The panels appear automatically once it&apos;s up.
           </p>
         )}
         {grafanaReachable !== false && (
