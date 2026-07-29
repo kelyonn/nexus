@@ -133,7 +133,11 @@ demo is exactly the output `nexus deploy` will produce automatically.
 
 PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the
 pre-PR gate, and this project's scope boundaries. Development setup notes
-specific to a fresh install: [INSTALLATION.md](INSTALLATION.md).
+specific to a fresh install: [INSTALLATION.md](INSTALLATION.md). Bigger
+ideas that are real but deliberately not started yet — secret management,
+a real multi-environment schema, dashboard log streaming — are tracked in
+[FUTURE-SCOPE.md](FUTURE-SCOPE.md), with the design questions each one
+actually needs answered first.
 
 ## License
 

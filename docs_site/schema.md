@@ -80,6 +80,10 @@ ArgoCD tracks `platform.branch`, and a mismatch soft-skips the git-sync step
 rather than aborting. See
 [Troubleshooting](troubleshooting.md#branch-mismatch-soft-skip).
 
+Running more than one environment (staging/prod) from separate `nexus.yaml`
+files? `branch` is the field that actually keeps them from colliding — see
+[Multiple environments](multi-environment.md).
+
 ## Full example
 
 From `examples/flask-demo/nexus.yaml`:

@@ -84,6 +84,11 @@ the actual command and output).
 - Stack auto-detection (`nexus init`) currently covers Node, Flask, and a
   generic fallback. Django/Go detectors are a known v2 item, not started.
 
+See [FUTURE-SCOPE.md](FUTURE-SCOPE.md) for bigger ideas that are real but
+deliberately not started — secret management, a real multi-environment
+schema, dashboard log streaming — each with the design questions it needs
+answered first. If you want to pick one up, start there.
+
 If you're unsure whether something fits, open an issue to discuss before
 sending a large PR — much easier to redirect early than to review a big
 diff against a still-shifting scope.
