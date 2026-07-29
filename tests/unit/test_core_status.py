@@ -118,6 +118,28 @@ def test_image_pull_fix_minikube(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "minikube image load" in status.image_pull_fix()
 
 
+def test_image_pull_fix_minikube_always_policy_warns_load_wont_help_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the default `Always`, the kubelet re-checks the registry
+    regardless of what's locally loaded — the fix must say so, not just
+    suggest a load that silently won't work.
+    """
+    monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
+    fix = status.image_pull_fix("Always")
+    assert "minikube image load" in fix
+    assert "IfNotPresent" in fix
+
+
+def test_image_pull_fix_minikube_if_not_present_policy_load_alone_suffices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
+    fix = status.image_pull_fix("IfNotPresent")
+    assert "minikube image load" in fix
+    assert "IfNotPresent" not in fix  # already set — no need to tell the user to change it
+
+
 def test_image_pull_fix_other_context(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(status.kubectl, "current_context", lambda: "eks-prod")
     assert "registry" in status.image_pull_fix().lower()

@@ -82,6 +82,13 @@ class AppConfig(BaseModel):
     replicas: int = Field(default=2, ge=1, le=20)
     env: list[EnvVar] = Field(default_factory=list)
     resources: Resources = Field(default_factory=Resources)
+    # "Always" is the safe default for a mutable `:latest`-style tag, but it's
+    # exactly what makes `status.image_pull_fix()`'s Minikube advice
+    # (`minikube image load`) not work — the kubelet retries the registry
+    # regardless of what's already loaded locally. Users hitting
+    # ImagePullBackOff on Minikube need IfNotPresent for that fix to actually
+    # do anything.
+    imagePullPolicy: Literal["Always", "IfNotPresent", "Never"] = "Always"
 
     @field_validator("name")
     @classmethod
