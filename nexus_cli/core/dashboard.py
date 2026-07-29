@@ -37,6 +37,13 @@ FRONTEND_PORT = 3001
 BACKEND_READY_TIMEOUT = 15
 SHUTDOWN_GRACE_PERIOD = 5
 TOKEN_ENV_VAR = "NEXUS_DASHBOARD_TOKEN"
+# The directory `nexus dashboard` was launched from — normally the one
+# containing the app's own nexus.yaml and git checkout, same convention every
+# other command follows. The backend's own process cwd is fixed to
+# `repo_root()` (it needs to import `dashboard.backend.main` as a module), so
+# without this it has no way to find the app's repo for commit-message
+# lookups (core.git.commit_subject) in the GitOps Log.
+APP_REPO_DIR_ENV_VAR = "NEXUS_APP_REPO_DIR"
 
 # Must match deploy.py's PROM_RELEASE ("kube-prom-stack") — the
 # kube-prometheus-stack chart names its Grafana Service "<release>-grafana"
@@ -106,7 +113,7 @@ def generate_token() -> str:
 
 
 def start_backend(token: str) -> subprocess.Popen[bytes]:
-    env = {**os.environ, TOKEN_ENV_VAR: token}
+    env = {**os.environ, TOKEN_ENV_VAR: token, APP_REPO_DIR_ENV_VAR: os.getcwd()}
     return subprocess.Popen(
         [
             sys.executable,
@@ -249,6 +256,7 @@ def shutdown(*processes: subprocess.Popen[bytes]) -> None:
 
 
 __all__ = [
+    "APP_REPO_DIR_ENV_VAR",
     "BACKEND_HOST",
     "BACKEND_PORT",
     "FRONTEND_PORT",

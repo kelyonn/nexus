@@ -15,7 +15,13 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from dashboard.backend import auth as auth_module  # noqa: E402
 from dashboard.backend.main import app  # noqa: E402
-from dashboard.backend.routes import core_chaos, core_status, prometheus  # noqa: E402
+from dashboard.backend.routes import (  # noqa: E402
+    core_chaos,
+    core_dashboard,
+    core_status,
+    git,
+    prometheus,
+)
 from nexus_cli.core import argocd  # noqa: E402
 from nexus_cli.core.output import NexusError  # noqa: E402
 
@@ -271,6 +277,7 @@ def test_synclog_returns_current_status_and_history(monkeypatch: pytest.MonkeyPa
             argocd.SyncEvent(revision="abc123", deployed_at="2026-01-01T00:00:00Z"),
         ],
     )
+    monkeypatch.setattr(git, "commit_subject", lambda sha, path=".": None)
     resp = client.get("/api/apps/my-app/synclog")
     assert resp.status_code == 200
     body = resp.json()
@@ -286,6 +293,62 @@ def test_synclog_empty_history_for_never_synced_app(monkeypatch: pytest.MonkeyPa
     resp = client.get("/api/apps/my-app/synclog")
     assert resp.status_code == 200
     assert resp.json()["history"] == []
+
+
+def test_synclog_includes_commit_subject_when_available_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="abc123", deployed_at="2026-01-01T00:00:00Z")],
+    )
+    monkeypatch.setattr(
+        git,
+        "commit_subject",
+        lambda sha, path=".": "nexus: upgrade image to v2" if sha == "abc123" else None,
+    )
+    resp = client.get("/api/apps/my-app/synclog")
+    assert resp.status_code == 200
+    assert resp.json()["history"][0]["subject"] == "nexus: upgrade image to v2"
+
+
+def test_synclog_subject_none_when_commit_not_found_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A revision from an app deployed by someone else, or a different repo
+    entirely, is an ordinary case — falls back to no subject, not an error.
+    """
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="unknown-sha", deployed_at="2026-01-01T00:00:00Z")],
+    )
+    monkeypatch.setattr(git, "commit_subject", lambda sha, path=".": None)
+    resp = client.get("/api/apps/my-app/synclog")
+    assert resp.status_code == 200
+    assert resp.json()["history"][0]["subject"] is None
+
+
+def test_synclog_uses_app_repo_dir_env_var_for_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="abc123", deployed_at="t")],
+    )
+    monkeypatch.setenv(core_dashboard.APP_REPO_DIR_ENV_VAR, "/some/app/checkout")
+    captured: dict[str, str] = {}
+
+    def fake_commit_subject(sha: str, path: str = ".") -> str | None:
+        captured["path"] = path
+        return None
+
+    monkeypatch.setattr(git, "commit_subject", fake_commit_subject)
+    client.get("/api/apps/my-app/synclog")
+    assert captured["path"] == "/some/app/checkout"
 
 
 # --- GET /api/apps/{name}/metrics ---

@@ -211,6 +211,24 @@ def test_show_file_at_commit_returns_none_on_failure(monkeypatch: pytest.MonkeyP
     assert git.show_file_at_commit("bogus", "nexus.yaml") is None
 
 
+def test_commit_subject_returns_subject(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        git.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=0, stdout="nexus: upgrade image to v2\n"),
+    )
+    assert git.commit_subject("abc123") == "nexus: upgrade image to v2"
+
+
+def test_commit_subject_returns_none_when_sha_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        git.subprocess,
+        "run",
+        lambda *a, **k: _FakeCompleted(returncode=128, stderr="fatal: bad object bogus"),
+    )
+    assert git.commit_subject("bogus") is None
+
+
 def test_log_image_commits_parses_entries(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = (
         "aaa111\x1faaa\x1f2026-07-20T10:00:00+00:00\x1fnexus: upgrade image to v2\n"
@@ -351,6 +369,14 @@ def test_show_file_at_commit_real_repo(tmp_path: Path) -> None:
     sha = _real_commit(tmp_path, "init")
     assert git.show_file_at_commit(sha, "nexus.yaml", path=str(tmp_path)) == "app:\n  image: v1\n"
     assert git.show_file_at_commit(sha, "does-not-exist.yaml", path=str(tmp_path)) is None
+
+
+def test_commit_subject_real_repo(tmp_path: Path) -> None:
+    _real_init(tmp_path)
+    (tmp_path / "nexus.yaml").write_text("app:\n  image: v1\n")
+    sha = _real_commit(tmp_path, "nexus: upgrade image to v1")
+    assert git.commit_subject(sha, path=str(tmp_path)) == "nexus: upgrade image to v1"
+    assert git.commit_subject("0" * 40, path=str(tmp_path)) is None
 
 
 def test_revert_real_repo_restores_previous_content(tmp_path: Path) -> None:

@@ -27,6 +27,7 @@ export interface PodSummary {
 export interface SyncEvent {
   revision: string | null;
   deployed_at: string | null;
+  subject: string | null;
 }
 
 export interface SyncLog {

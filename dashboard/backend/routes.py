@@ -7,13 +7,16 @@ dashboard can never silently disagree about what a given app's status means.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from dashboard.backend import prometheus
 from dashboard.backend.auth import require_token
-from nexus_cli.core import argocd, kubectl
+from nexus_cli.core import argocd, git, kubectl
 from nexus_cli.core import chaos as core_chaos
+from nexus_cli.core import dashboard as core_dashboard
 from nexus_cli.core import status as core_status
 from nexus_cli.core.output import NexusError
 
@@ -49,6 +52,7 @@ class ChaosResponse(BaseModel):
 class SyncEventOut(BaseModel):
     revision: str | None
     deployed_at: str | None
+    subject: str | None
 
 
 class SyncLogResponse(BaseModel):
@@ -172,6 +176,22 @@ def app_metrics(name: str, window: str = prometheus.DEFAULT_WINDOW) -> MetricsRe
     )
 
 
+def _commit_subject(revision: str | None) -> str | None:
+    """Best-effort commit message lookup for one sync event.
+
+    Only works when the SHA is fetched into the local checkout at
+    ``NEXUS_APP_REPO_DIR`` (the directory ``nexus dashboard`` was launched
+    from — see core/dashboard.py). For any *other* app's revisions, or if
+    that repo doesn't have the commit, this returns None and the caller
+    falls back to showing the bare SHA — the same thing this project always
+    showed before this lookup existed, not a new failure mode.
+    """
+    if not revision:
+        return None
+    repo_dir = os.environ.get(core_dashboard.APP_REPO_DIR_ENV_VAR, ".")
+    return git.commit_subject(revision, path=repo_dir)
+
+
 @router.get("/apps/{name}/synclog", response_model=SyncLogResponse)
 def sync_log(name: str) -> SyncLogResponse:
     """Recent ArgoCD sync events for one app (PRD §10.3)."""
@@ -182,5 +202,12 @@ def sync_log(name: str) -> SyncLogResponse:
         sync_status=current.sync_status,
         health_status=current.health_status,
         last_sync_time=current.last_sync_time,
-        history=[SyncEventOut(revision=h.revision, deployed_at=h.deployed_at) for h in history],
+        history=[
+            SyncEventOut(
+                revision=h.revision,
+                deployed_at=h.deployed_at,
+                subject=_commit_subject(h.revision),
+            )
+            for h in history
+        ],
     )

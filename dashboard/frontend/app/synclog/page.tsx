@@ -10,6 +10,7 @@ interface Row {
   app: string;
   deployedAt: string | null;
   revision: string | null;
+  subject: string | null;
   syncStatus: string;
   healthStatus: string;
 }
@@ -28,6 +29,7 @@ async function fetchAllRows(): Promise<Row[]> {
         app: log.app,
         deployedAt: event.deployed_at,
         revision: event.revision,
+        subject: event.subject,
         syncStatus: log.sync_status,
         healthStatus: log.health_status,
       });
@@ -82,6 +84,7 @@ export default function SyncLogPage() {
               <th>App</th>
               <th>Status</th>
               <th>Revision</th>
+              <th>Message</th>
             </tr>
           </thead>
           <tbody>
@@ -98,6 +101,7 @@ export default function SyncLogPage() {
                 <td>
                   <code>{row.revision ? row.revision.slice(0, 7) : "—"}</code>
                 </td>
+                <td>{row.subject ?? <span className="muted">—</span>}</td>
               </tr>
             ))}
           </tbody>
