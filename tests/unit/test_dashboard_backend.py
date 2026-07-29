@@ -20,6 +20,7 @@ from dashboard.backend.routes import (  # noqa: E402
     core_dashboard,
     core_status,
     git,
+    kubectl,
     prometheus,
 )
 from nexus_cli.core import argocd  # noqa: E402
@@ -59,6 +60,7 @@ def test_cors_restricted_to_frontend_origin() -> None:
 def test_list_apps_returns_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
     monkeypatch.setattr(core_status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: True)
 
     resp = client.get("/api/apps")
     assert resp.status_code == 200
@@ -71,8 +73,21 @@ def test_list_apps_returns_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
             "last_sync_time": "t",
             "desired_replicas": 2,
             "available_replicas": 2,
+            "has_http_metrics": True,
         }
     ]
+
+
+def test_list_apps_has_http_metrics_false_when_no_servicemonitor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
+    monkeypatch.setattr(core_status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: False)
+
+    resp = client.get("/api/apps")
+    assert resp.status_code == 200
+    assert resp.json()[0]["has_http_metrics"] is False
 
 
 def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
@@ -88,6 +103,7 @@ def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
         )
 
     monkeypatch.setattr(core_status, "replica_counts", raise_not_found)
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: False)
 
     resp = client.get("/api/apps")
     assert resp.status_code == 200

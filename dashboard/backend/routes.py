@@ -30,6 +30,7 @@ class AppSummary(BaseModel):
     last_sync_time: str | None
     desired_replicas: int
     available_replicas: int
+    has_http_metrics: bool
 
 
 class PodSummary(BaseModel):
@@ -104,6 +105,15 @@ def list_apps() -> list[AppSummary]:
             if not kubectl.is_not_found(err.why or ""):
                 raise HTTPException(status_code=502, detail=str(err)) from err
             desired, available = 0, 0
+        try:
+            has_http_metrics = kubectl.resource_exists(
+                "servicemonitor", app.name, namespace=app.name
+            )
+        except NexusError:
+            # Best-effort, like the replica lookup above — a hiccup here
+            # shouldn't cost the user the whole Overview. Worst case, the App
+            # Detail page just doesn't show the HTTP panels for this app.
+            has_http_metrics = False
         summaries.append(
             AppSummary(
                 name=app.name,
@@ -112,6 +122,7 @@ def list_apps() -> list[AppSummary]:
                 last_sync_time=app.last_sync_time,
                 desired_replicas=desired,
                 available_replicas=available,
+                has_http_metrics=has_http_metrics,
             )
         )
     return summaries

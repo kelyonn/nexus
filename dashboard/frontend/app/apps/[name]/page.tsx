@@ -3,7 +3,15 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, Metrics, PodSummary, getMetrics, listPods, triggerChaos } from "@/lib/api";
+import {
+  ApiError,
+  Metrics,
+  PodSummary,
+  getMetrics,
+  listApps,
+  listPods,
+  triggerChaos,
+} from "@/lib/api";
 import { formatAge } from "@/lib/age";
 import Sparkline from "@/app/Sparkline";
 
@@ -36,11 +44,21 @@ const GRAFANA_CHECK_TIMEOUT_MS = 2000;
 // them, not invent new metrics. Each is real cluster data (kube-state-metrics
 // + cAdvisor via kube-prometheus-stack), not app-level instrumentation, so
 // no changes to the deployed app are needed for any of these to work.
-const GRAFANA_PANELS = [
+const CLUSTER_PANELS = [
   { slug: "availability", label: "Pod Availability" },
   { slug: "restarts", label: "Pod Restarts" },
   { slug: "resources", label: "CPU / Memory Usage" },
   { slug: "replicas", label: "Desired vs Running" },
+] as const;
+
+// Only rendered by `nexus deploy` when app.metricsPath is set (PRD §10.4) —
+// unlike CLUSTER_PANELS above, these dashboards don't exist in Grafana for
+// apps that never opted in, so they're appended conditionally once we know
+// (via has_http_metrics from /api/apps) that this app actually has them.
+const HTTP_METRIC_PANELS = [
+  { slug: "requests", label: "HTTP Request Rate" },
+  { slug: "errors", label: "HTTP Error Rate" },
+  { slug: "latency", label: "HTTP P95 Latency" },
 ] as const;
 
 // A cross-origin iframe that fails to load (connection refused, nothing
@@ -75,6 +93,27 @@ export default function AppDetailPage() {
   const [grafanaReachable, setGrafanaReachable] = useState<boolean | null>(null);
   const [metrics, setMetrics] = useState<Metrics | null>(null);
   const [metricsError, setMetricsError] = useState<string | null>(null);
+  const [hasHttpMetrics, setHasHttpMetrics] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function checkHttpMetrics() {
+      try {
+        const apps = await listApps();
+        const match = apps.find((a) => a.name === name);
+        if (!cancelled && match) setHasHttpMetrics(match.has_http_metrics);
+      } catch {
+        // Best-effort — if this fails, the HTTP panels just don't show up,
+        // same as if the app never had metricsPath set.
+      }
+    }
+
+    checkHttpMetrics();
+    return () => {
+      cancelled = true;
+    };
+  }, [name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -161,6 +200,10 @@ export default function AppDetailPage() {
     }
   }
 
+  const panels: readonly { slug: string; label: string }[] = hasHttpMetrics
+    ? [...CLUSTER_PANELS, ...HTTP_METRIC_PANELS]
+    : CLUSTER_PANELS;
+
   return (
     <div>
       <Link href="/" className="back-link">
@@ -221,7 +264,7 @@ export default function AppDetailPage() {
         )}
         {grafanaReachable !== false && (
           <div className="metrics-grid">
-            {GRAFANA_PANELS.map((panel) => (
+            {panels.map((panel) => (
               <div key={panel.slug}>
                 <p className="muted" style={{ marginBottom: "0.3rem" }}>
                   {panel.label}

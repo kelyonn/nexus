@@ -5,6 +5,15 @@
 # real values (port 5050, /healthz) differ from the Flask *preset* defaults
 # (port 5000, /health) — that's expected; presets are stack conventions, this
 # file is what the app actually needs (PRD §0).
+#
+# app.py is instrumented with prometheus-flask-exporter (PRD §10.4's HTTP
+# metrics), but `metricsPath` is deliberately NOT set here: `image` below is
+# the pre-built kelyonnnn17/nexus-app:v1 on Docker Hub, which predates that
+# instrumentation and doesn't actually expose /metrics — this file is also
+# the golden-test fixture and what CI's e2e suite deploys, both of which
+# assume the image matches what's configured. If you build your own image
+# from this example (the instrumented app.py), add `metricsPath: /metrics`
+# to your own nexus.yaml and a ServiceMonitor gets rendered automatically.
 
 app:
   name: nexus-app
