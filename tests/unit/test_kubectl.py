@@ -309,6 +309,25 @@ def test_namespace_exists_false(monkeypatch: pytest.MonkeyPatch) -> None:
     assert kubectl.namespace_exists("my-app") is False
 
 
+def test_resource_exists_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> _FakeCompleted:
+        captured["args"] = args
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(kubectl.subprocess, "run", fake_run)
+    assert kubectl.resource_exists("servicemonitor", "my-app", namespace="my-app") is True
+    assert captured["args"] == ["kubectl", "get", "servicemonitor", "my-app", "-n", "my-app"]
+
+
+def test_resource_exists_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    monkeypatch.setattr(kubectl.subprocess, "run", lambda *a, **k: _FakeCompleted(returncode=1))
+    assert kubectl.resource_exists("servicemonitor", "my-app", namespace="my-app") is False
+
+
 def test_can_i_true(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_which(monkeypatch, True)
     captured: dict[str, list[str]] = {}

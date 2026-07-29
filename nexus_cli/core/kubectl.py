@@ -200,6 +200,15 @@ def namespace_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def resource_exists(resource: str, name: str, *, namespace: str) -> bool:
+    """Whether a specific named resource exists — e.g. the dashboard checking
+    for an app's ServiceMonitor (PRD §10.4) to know if it was ever configured,
+    without needing to read the app's own nexus.yaml.
+    """
+    result = _run_raw(["get", resource, name, "-n", namespace], timeout=DEFAULT_TIMEOUT)
+    return result.returncode == 0
+
+
 def can_i(verb: str, resource: str, *, all_namespaces: bool = False) -> bool:
     """``kubectl auth can-i <verb> <resource> [-A]`` — True if the current
     context is allowed. A "no" is a legitimate answer (exit code 1), not an

@@ -1,0 +1,23 @@
+{% set metrics_port_name = "metrics" if app.effective_metrics_port != app.port else "http" %}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ app.name }}
+  namespace: {{ app.name }}
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+    # kube-prometheus-stack's Prometheus only scrapes ServiceMonitors
+    # matching this label (its serviceMonitorSelector), not every
+    # ServiceMonitor in the cluster — confirmed against a live cluster's
+    # actual Prometheus CR before assuming this, the same way the Grafana
+    # dashboard ConfigMap needed grafana_dashboard: "1".
+    release: kube-prom-stack
+spec:
+  selector:
+    matchLabels:
+      app: {{ app.name }}
+  endpoints:
+    - port: {{ metrics_port_name }}
+      path: {{ app.metricsPath }}
+      interval: 15s

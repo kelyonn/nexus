@@ -178,6 +178,36 @@ def test_invalid_stack_value(tmp_path: Path) -> None:
         config.load(p)
 
 
+def test_metrics_path_unset_by_default(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.metricsPath is None
+    assert cfg.app.metricsPort is None
+    assert cfg.app.effective_metrics_port == cfg.app.port
+
+
+def test_metrics_path_and_port_set(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "/metrics", "metricsPort": 9100}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.metricsPath == "/metrics"
+    assert cfg.app.effective_metrics_port == 9100
+
+
+def test_metrics_path_defaults_port_to_app_port(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "/metrics"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.effective_metrics_port == cfg.app.port
+
+
+def test_invalid_metrics_path_missing_leading_slash(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "metrics"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
 def test_valid_image_pull_policy_if_not_present(tmp_path: Path) -> None:
     app = {**VALID_APP, "imagePullPolicy": "IfNotPresent"}
     p = _write(tmp_path, app, VALID_PLATFORM)

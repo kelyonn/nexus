@@ -19,6 +19,11 @@ from nexus_cli.core.config import NexusConfig
 
 
 def _remove_namespace(name: str) -> None:
+    """Deletes the app's whole namespace — which also takes its ServiceMonitor
+    with it (PRD §10.4), since that lives in the app's own namespace, not
+    ``monitoring``. Unlike the PrometheusRules/Grafana ConfigMap below, no
+    separate teardown step is needed for it.
+    """
     kubectl.delete("namespace", name)
 
 

@@ -89,6 +89,13 @@ class AppConfig(BaseModel):
     # ImagePullBackOff on Minikube need IfNotPresent for that fix to actually
     # do anything.
     imagePullPolicy: Literal["Always", "IfNotPresent", "Never"] = "Always"
+    # Opt-in: unset means "this app doesn't expose Prometheus metrics", which
+    # is the honest default for an arbitrary containerized app (PRD §10.4's
+    # request-rate/error-rate/latency panels need the app itself to emit
+    # them — Nexus can't manufacture that data for you). Setting this renders
+    # a ServiceMonitor so kube-prometheus-stack's Prometheus scrapes it.
+    metricsPath: str | None = None
+    metricsPort: int | None = Field(default=None, ge=1, le=65535)
 
     @field_validator("name")
     @classmethod
@@ -110,6 +117,19 @@ class AppConfig(BaseModel):
         if not v.startswith("/"):
             raise ValueError("must start with '/'")
         return v
+
+    @field_validator("metricsPath")
+    @classmethod
+    def _metrics_path(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith("/"):
+            raise ValueError("must start with '/'")
+        return v
+
+    @property
+    def effective_metrics_port(self) -> int:
+        """``metricsPort`` if set, else the app's own port — most apps expose
+        metrics on the same port they serve traffic on."""
+        return self.metricsPort if self.metricsPort is not None else self.port
 
 
 class PlatformConfig(BaseModel):

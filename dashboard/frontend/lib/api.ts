@@ -14,6 +14,7 @@ export interface AppSummary {
   last_sync_time: string | null;
   desired_replicas: number;
   available_replicas: number;
+  has_http_metrics: boolean;
 }
 
 export interface PodSummary {
