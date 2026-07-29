@@ -18,13 +18,15 @@ and pod events, killing a pod and watching it recover, diagnosing a broken
 environment, bumping an image through GitOps, and rolling it back through
 `git revert` — proven to survive ArgoCD's self-heal, not just claimed to.
 
-✅ **Phase 3 (the dashboard) is built.** `nexus dashboard` launches a local
-FastAPI backend + Next.js frontend — an Overview grid of every Nexus-managed
-app, an App Detail view with a chaos-trigger button and a Grafana panel, and
-a GitOps sync log. It ships as source in this repo rather than inside the
-published package for now (see [dashboard/backend](dashboard/backend) /
-[dashboard/frontend](dashboard/frontend)), so it currently only works from a
-checkout — see [Try it](#try-it).
+✅ **The dashboard is built, including app-level metrics.** `nexus dashboard`
+launches a local control panel — an Overview grid of every Nexus-managed app,
+an App Detail view with pod age, CPU/memory sparklines, a chaos-trigger
+button, and Grafana panels (including request rate/error rate/P95 latency for
+apps that opt in via `metricsPath`), and a GitOps sync log with real commit
+messages. It's one process: the frontend ([dashboard/frontend](dashboard/frontend))
+builds to a static export that the backend ([dashboard/backend](dashboard/backend))
+serves directly, so `pip install nexus-gitops[dashboard]` works with no Node
+installed — see [The dashboard](#the-dashboard) below.
 
 Not yet published to PyPI/Homebrew — install from source for now (see
 [Try it](#try-it) below).
@@ -93,25 +95,25 @@ already installed and never duplicates resources. `nexus upgrade --image
 ### The dashboard
 
 ```bash
-pip install -e ".[dashboard]"           # fastapi/uvicorn — not in the base install
-cd dashboard/frontend && npm install    # one-time
-cd ../..
-nexus dashboard                          # opens the browser, Ctrl+C to stop
+pip install -e ".[dashboard]"   # fastapi/uvicorn — not in the base install
+nexus dashboard                  # opens the browser, Ctrl+C to stop
 ```
 
-Needs at least one app deployed (`nexus deploy` above) to show anything on
-the Overview grid. The Grafana panel on the App Detail page needs
-`kubectl port-forward svc/kube-prom-stack-grafana 3000:80 -n monitoring`
-first — Nexus doesn't expose Grafana outside the cluster automatically.
+No Node/npm needed — the frontend ships as a static export baked into the
+package (a checkout needs one `npm run build` in `dashboard/frontend` first if
+you haven't already; see that directory's README). Needs at least one app
+deployed (`nexus deploy` above) to show anything on the Overview grid.
+`nexus dashboard` port-forwards Grafana and Prometheus for you automatically
+if it finds them on the cluster — no manual `kubectl port-forward` needed.
 
 ## Repository map
 
 ```
 nexus_cli/          The Python package (Typer CLI) — the full command suite
-dashboard/backend/  FastAPI API for the dashboard (127.0.0.1:3002)
-dashboard/frontend/ Next.js control panel (port 3001)
+dashboard/backend/  FastAPI API + static frontend server for the dashboard (127.0.0.1:3002)
+dashboard/frontend/ Next.js control panel, built to a static export (dashboard/frontend/out/)
 examples/           Sample apps for demos and e2e tests (flask-demo, live-tested)
-tests/              355 unit tests (99% core coverage) + a Kind-based integration suite
+tests/              441 unit tests (99% core coverage) + a Kind-based integration suite
 legacy/             The original hand-written GitOps demo (archived, read-only)
 ```
 

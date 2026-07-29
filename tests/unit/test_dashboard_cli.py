@@ -35,7 +35,7 @@ def _patch_happy_path(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
     calls: dict[str, object] = {}
     monkeypatch.setattr(cd, "check_dashboard_deps_installed", lambda: None)
     monkeypatch.setattr(cd, "check_backend_source_present", lambda: None)
-    monkeypatch.setattr(cd, "check_frontend_ready", lambda: None)
+    monkeypatch.setattr(cd, "check_frontend_built", lambda: None)
     monkeypatch.setattr(kubectl, "cluster_reachable", lambda: True)
     monkeypatch.setattr(cd, "generate_token", lambda: "test-token")
 
@@ -43,12 +43,7 @@ def _patch_happy_path(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         calls["backend_proc"] = _FakeProc("backend")
         return calls["backend_proc"]
 
-    def start_frontend() -> _FakeProc:
-        calls["frontend_proc"] = _FakeProc("frontend")
-        return calls["frontend_proc"]
-
     monkeypatch.setattr(cd, "start_backend", start_backend)
-    monkeypatch.setattr(cd, "start_frontend", start_frontend)
     monkeypatch.setattr(cd, "start_grafana_port_forward", lambda: None)
     monkeypatch.setattr(cd, "start_prometheus_port_forward", lambda: None)
     monkeypatch.setattr(cd, "wait_for_backend_ready", lambda: None)
@@ -85,23 +80,23 @@ def test_dashboard_missing_backend_source_reports_fix(monkeypatch: pytest.Monkey
     assert "backend source not found" in result.output
 
 
-def test_dashboard_missing_frontend_deps_reports_fix(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_dashboard_missing_frontend_build_reports_fix(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cd, "check_dashboard_deps_installed", lambda: None)
     monkeypatch.setattr(cd, "check_backend_source_present", lambda: None)
 
     def fail() -> None:
-        raise NexusError(what="npm is required but not installed.", fix="Install Node.js")
+        raise NexusError(what="Dashboard frontend isn't built.", fix="Run npm run build.")
 
-    monkeypatch.setattr(cd, "check_frontend_ready", fail)
+    monkeypatch.setattr(cd, "check_frontend_built", fail)
     result = runner.invoke(app, ["dashboard"])
     assert result.exit_code != 0
-    assert "npm is required" in result.output
+    assert "frontend isn't built" in result.output
 
 
 def test_dashboard_unreachable_cluster_reports_fix(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cd, "check_dashboard_deps_installed", lambda: None)
     monkeypatch.setattr(cd, "check_backend_source_present", lambda: None)
-    monkeypatch.setattr(cd, "check_frontend_ready", lambda: None)
+    monkeypatch.setattr(cd, "check_frontend_built", lambda: None)
     monkeypatch.setattr(kubectl, "cluster_reachable", lambda: False)
     result = runner.invoke(app, ["dashboard"])
     assert result.exit_code != 0
@@ -131,7 +126,7 @@ def test_dashboard_happy_path_opens_browser_and_shuts_down_on_ctrl_c(
     assert "Dashboard ready" in result.output
     assert "Shutting down" in result.output
     assert calls["opened_url"] == "http://x/?token=test-token"
-    assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
+    assert calls["shutdown_called_with"] == (calls["backend_proc"],)
 
 
 def test_dashboard_forwards_grafana_when_available_and_shuts_it_down(
@@ -163,7 +158,6 @@ def test_dashboard_forwards_grafana_when_available_and_shuts_it_down(
     assert "Port-forwarding Grafana" in result.output
     assert calls["shutdown_called_with"] == (
         calls["backend_proc"],
-        calls["frontend_proc"],
         calls["grafana_proc"],
     )
 
@@ -197,7 +191,6 @@ def test_dashboard_forwards_prometheus_when_available_and_shuts_it_down(
     assert "Port-forwarding Prometheus" in result.output
     assert calls["shutdown_called_with"] == (
         calls["backend_proc"],
-        calls["frontend_proc"],
         calls["prometheus_proc"],
     )
 
@@ -221,7 +214,7 @@ def test_dashboard_no_prometheus_reports_and_continues(monkeypatch: pytest.Monke
 
     assert result.exit_code == 0, result.output
     assert "No Prometheus found" in result.output
-    assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
+    assert calls["shutdown_called_with"] == (calls["backend_proc"],)
 
 
 def test_dashboard_no_grafana_reports_and_continues(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,7 +236,7 @@ def test_dashboard_no_grafana_reports_and_continues(monkeypatch: pytest.MonkeyPa
 
     assert result.exit_code == 0, result.output
     assert "No Grafana found" in result.output
-    assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
+    assert calls["shutdown_called_with"] == (calls["backend_proc"],)
 
 
 def test_dashboard_backend_not_ready_shuts_down_and_exits(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -258,5 +251,5 @@ def test_dashboard_backend_not_ready_shuts_down_and_exits(monkeypatch: pytest.Mo
 
     assert result.exit_code != 0
     assert "did not become ready" in result.output
-    assert calls["shutdown_called_with"] == (calls["backend_proc"], calls["frontend_proc"])
+    assert calls["shutdown_called_with"] == (calls["backend_proc"],)
     assert "opened_url" not in calls
