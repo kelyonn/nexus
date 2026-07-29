@@ -116,6 +116,34 @@ def test_deploy_happy_path_all_deps_missing(
     assert "kubectl -n my-app port-forward svc/my-app" in result.output
 
 
+def test_deploy_reports_argocd_health_quirk_instead_of_claiming_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When wait_for_healthy succeeds via the ground-truth override (ArgoCD's
+    v3.4.5 health:Progressing quirk), deploy must not falsely say "Healthy".
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+    monkeypatch.setattr(
+        argocd,
+        "wait_for_healthy",
+        lambda name, timeout=0: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Progressing",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Deployment fully available" in result.output
+    assert "ArgoCD itself still reports health=Progressing" in result.output
+    assert "Synced + Healthy" not in result.output
+
+
 def test_deploy_skips_already_installed_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -208,6 +236,34 @@ def test_install_monitoring_enables_grafana_iframe_embedding(
     # helm --set treats "." as a path separator, so the dot inside the
     # `grafana.ini` value key must stay escaped or the setting lands nowhere.
     assert all("grafana\\.ini" in key for key in values)
+    assert captured["chart_version"] == deploy_module.PROM_CHART_VERSION
+
+
+def test_install_functions_pin_chart_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD §15: pin tested chart versions rather than always installing
+    whatever the repo currently resolves as latest.
+    """
+    calls: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(helm, "repo_add", lambda name, url: None)
+    monkeypatch.setattr(
+        helm,
+        "upgrade_install",
+        lambda release, chart, **k: calls.append((release, chart, k.get("chart_version"))),
+    )
+
+    deploy_module._install_argocd()
+    deploy_module._install_monitoring()
+    deploy_module._install_chaos()
+
+    assert calls == [
+        (deploy_module.ARGO_RELEASE, deploy_module.ARGO_CHART, deploy_module.ARGO_CHART_VERSION),
+        (deploy_module.PROM_RELEASE, deploy_module.PROM_CHART, deploy_module.PROM_CHART_VERSION),
+        (
+            deploy_module.CHAOS_RELEASE,
+            deploy_module.CHAOS_CHART,
+            deploy_module.CHAOS_CHART_VERSION,
+        ),
+    ]
 
 
 def test_dependency_status_all_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:

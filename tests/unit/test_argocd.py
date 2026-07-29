@@ -180,6 +180,83 @@ def test_wait_for_healthy_returns_when_synced_and_healthy(monkeypatch: pytest.Mo
     assert result.sync_status == "Synced"
 
 
+def _progressing_status(name: str) -> argocd.ArgoAppStatus:
+    return argocd.ArgoAppStatus(
+        name=name,
+        sync_status="Synced",
+        health_status="Progressing",
+        revision="x",
+        last_sync_time="t",
+    )
+
+
+def test_wait_for_healthy_accepts_progressing_when_deployment_actually_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ArgoCD v3.4.5 quirk: health stuck on Progressing for a Deployment
+    Kubernetes itself reports fully available. Ground truth wins.
+    """
+    monkeypatch.setattr(argocd, "get_status", _progressing_status)
+    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 2))
+
+    result = argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
+
+    assert result.sync_status == "Synced"
+    assert result.health_status == "Progressing"  # unmodified — real ArgoCD truth
+
+
+def test_wait_for_healthy_still_times_out_when_progressing_and_not_actually_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Progressing alone is never enough — only overridden when the Deployment
+    itself confirms every replica is up.
+    """
+    monkeypatch.setattr(argocd, "get_status", _progressing_status)
+    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 1))
+    fake_clock = iter([0, 1, 2, 100])
+    monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
+    monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
+
+    with pytest.raises(NexusError, match="did not become Synced"):
+        argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
+
+
+def test_wait_for_healthy_does_not_override_degraded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Degraded/Missing are real problems ArgoCD is reporting — never overridden,
+    even if the ground-truth check would otherwise pass.
+    """
+    monkeypatch.setattr(
+        argocd,
+        "get_status",
+        lambda name: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Degraded",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 2))
+    fake_clock = iter([0, 1, 2, 100])
+    monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
+    monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
+
+    with pytest.raises(NexusError, match="did not become Synced"):
+        argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
+
+
+def test_deployment_actually_ready_false_on_kubectl_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A kubectl failure while cross-checking must never masquerade as 'ready'."""
+
+    def raise_err(namespace: str, name: str) -> tuple[int, int]:
+        raise NexusError(what="deployment not found")
+
+    monkeypatch.setattr(argocd.status, "replica_counts", raise_err)
+    assert argocd._deployment_actually_ready("my-app") is False
+
+
 def test_wait_for_healthy_raises_on_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         argocd,

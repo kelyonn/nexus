@@ -39,12 +39,18 @@ def _report_rollout(cfg: NexusConfig) -> None:
     output.step("Syncing via ArgoCD...")
     argocd.trigger_sync(cfg.app.name)
     try:
-        argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
+        result = argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
     except output.NexusError as err:
         output.print_error(err)
         output.step("")
         output.step("The rollback was committed and pushed — check `nexus status`.")
         raise typer.Exit(code=1) from err
+    if result.health_status != "Healthy":
+        output.warn(
+            f"ArgoCD itself still reports health={result.health_status} (a known "
+            "ArgoCD quirk on some versions); the Deployment's own replica counts "
+            "confirm it's actually ready."
+        )
 
     output.step("")
     output.step("Pods:")

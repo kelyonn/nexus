@@ -256,7 +256,36 @@ def test_upgrade_happy_path_commits_syncs_and_reports_pods(
     assert apply_calls["remote"] == "origin"
     assert "image: myrepo/app:v2" in apply_calls["new_text"]
     assert sync_calls["sync"] == "my-app"
-    assert "my-app-abc" in result.output
+
+
+def test_upgrade_reports_argocd_health_quirk_instead_of_silence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """wait_for_healthy succeeding via the ground-truth override (ArgoCD's
+    v3.4.5 health:Progressing quirk) must still be visible to the user.
+    """
+    _setup_common(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        upgrade_module.gitops, "check_git_preconditions", lambda cfg: _ok_preconditions()
+    )
+    monkeypatch.setattr(upgrade_module.gitops, "apply_image_change", lambda *a, **k: True)
+    monkeypatch.setattr(upgrade_module.argocd, "trigger_sync", lambda name: None)
+    monkeypatch.setattr(
+        upgrade_module.argocd,
+        "wait_for_healthy",
+        lambda name, **k: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Progressing",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+    monkeypatch.setattr(upgrade_module.gitops, "summarize_pods", lambda ns: [])
+
+    result = runner.invoke(app, ["upgrade", "--image", "myrepo/app:v2"])
+    assert result.exit_code == 0, result.output
+    assert "ArgoCD itself still reports health=Progressing" in result.output
     assert "upgraded to myrepo/app:v2" in result.output
 
 

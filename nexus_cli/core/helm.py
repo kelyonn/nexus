@@ -74,9 +74,15 @@ def upgrade_install(
     namespace: str,
     create_namespace: bool = True,
     values: dict[str, str] | None = None,
+    chart_version: str | None = None,
     timeout: int = INSTALL_TIMEOUT,
 ) -> subprocess.CompletedProcess[str]:
-    """``helm upgrade --install <release> <chart> -n <namespace>``. Idempotent."""
+    """``helm upgrade --install <release> <chart> -n <namespace>``. Idempotent.
+
+    ``chart_version`` pins the exact chart version to install (PRD §15's
+    stated mitigation for Helm/ArgoCD version skew) rather than always
+    resolving whatever is currently latest in the repo.
+    """
     if not is_installed():
         raise NexusError(
             what="helm is required but not installed.",
@@ -85,6 +91,8 @@ def upgrade_install(
     args = ["helm", "upgrade", "--install", release, chart, "-n", namespace]
     if create_namespace:
         args.append("--create-namespace")
+    if chart_version:
+        args += ["--version", chart_version]
     for key, value in (values or {}).items():
         args += ["--set", f"{key}={value}"]
     args += ["--timeout", f"{timeout}s", "--wait"]
