@@ -110,6 +110,21 @@ All notable changes to Nexus are documented here. Format based on
   this repo's own `docs/` remains a separate, gitignored, local-only
   directory and is not published. `CONTRIBUTING.md`, issue templates
   (bug report / feature request), and a PR template were also added.
+- `docs_site/multi-environment.md` documents running staging/prod from
+  separate `nexus.yaml` files via `--config` — what already worked, just
+  undocumented, plus the two fields (`platform.branch`, `app.name`) that
+  actually keep two environments from colliding. `FUTURE-SCOPE.md` tracks
+  bigger deferred ideas (secret management, a real `environments:` schema,
+  dashboard log streaming) with the design questions each needs answered
+  first, following an external review of the project.
+- Dashboard frontend types (`dashboard/frontend/lib/api.generated.ts`) are
+  now generated from the backend's Pydantic response models
+  (`scripts/generate_dashboard_types.py`, via Pydantic's
+  `models_json_schema` + `json-schema-to-typescript`) instead of hand-kept
+  in sync — a real, repeated source of bugs while building the dashboard
+  (`has_http_metrics`, `created_at`, and `subject` each needed adding by
+  hand to both sides). CI regenerates and fails if the committed output is
+  stale (`.github/workflows/ci.yml`'s `dashboard-frontend` job).
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git

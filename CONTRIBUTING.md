@@ -29,6 +29,17 @@ pip install -e ".[dev,dashboard]"
 If you're touching the dashboard frontend, also see
 `dashboard/frontend/README.md` for its two build modes.
 
+**A real footgun, found the hard way:** `pip install -e .` only keeps
+`nexus_cli` live-linked to source. `dashboard/` is added to the wheel via
+`force-include` (see `pyproject.toml`'s comment) rather than `packages`,
+and for an *editable* install that gets physically snapshotted into
+`site-packages/dashboard/` once, at install time — it does **not** track
+further edits to `dashboard/backend/*.py`. Symptom: your changes to that
+directory seem to have no effect when running something standalone (not
+`pytest`, which resolves imports differently and isn't affected). Fix:
+`rm -rf venv/lib/*/site-packages/dashboard` and re-run whatever you were
+testing — or just re-run `pip install -e ".[dev,dashboard]"`.
+
 ## Before opening a PR
 
 Run the same gate CI runs:
