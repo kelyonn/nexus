@@ -120,6 +120,29 @@ def test_sync_history_sorts_most_recent_first(monkeypatch: pytest.MonkeyPatch) -
     assert [e.revision for e in events] == ["def456", "abc123"]
 
 
+def test_sync_history_handles_entries_missing_deployed_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sorting keys off `deployed_at or ""`, so null/absent timestamps must not
+    blow up on a str/None comparison — they sort last.
+    """
+    doc = {
+        "status": {
+            "history": [
+                {"revision": "no-timestamp"},
+                {"revision": "newer", "deployedAt": "2026-01-02T00:00:00Z"},
+                {"revision": "null-timestamp", "deployedAt": None},
+                {"revision": "older", "deployedAt": "2026-01-01T00:00:00Z"},
+            ]
+        }
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    events = argocd.sync_history("my-app")
+    assert [e.revision for e in events[:2]] == ["newer", "older"]
+    assert {e.revision for e in events[2:]} == {"no-timestamp", "null-timestamp"}
+    assert all(e.deployed_at is None for e in events[2:])
+
+
 def test_sync_history_empty_when_no_history_yet(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: {"status": {}})
     assert argocd.sync_history("my-app") == []
