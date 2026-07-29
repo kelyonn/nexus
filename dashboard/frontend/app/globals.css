@@ -270,9 +270,15 @@ th {
   }
 }
 
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.25rem;
+}
+
 .grafana-frame {
   width: 100%;
-  min-height: 400px;
+  min-height: 260px;
   border: 1px solid var(--border);
   border-radius: 8px;
 }
