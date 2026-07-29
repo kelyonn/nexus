@@ -52,6 +52,27 @@ All notable changes to Nexus are documented here. Format based on
   (works without a cluster). `core/gitops.py`/`core/git.py` are shared with
   `upgrade` (git primitives, image-in-YAML editing, the commit/push/sync/wait
   tail).
+- `nexus dashboard` — a local browser control panel. `dashboard/backend`
+  (FastAPI, `127.0.0.1:3002`) exposes `GET /api/apps` (via
+  `argocd.list_managed_apps()`, discovering every Nexus-managed app by its
+  `managed-by: nexus` label — the CLI operates on one app at a time, but the
+  dashboard shows all of them), `GET /apps/{name}/pods`,
+  `GET /apps/{name}/synclog`, and the one mutating endpoint,
+  `POST /apps/{name}/chaos`, gated behind a per-session bearer token
+  `nexus dashboard` generates fresh at launch (PRD §13 — local CSRF
+  protection, since a page in the browser can POST to 127.0.0.1:3002
+  directly regardless of CORS). `dashboard/frontend` (Next.js, port 3001)
+  renders an Overview grid, an App Detail view (pod list, a chaos-trigger
+  button with a live recovery indicator, and an embedded Grafana panel —
+  Grafana isn't exposed outside the cluster automatically, so this
+  documents the manual `kubectl port-forward` step rather than pretending
+  it's automatic), and a GitOps Log. `nexus dashboard` launches both,
+  waits for the backend's health check, and opens the browser; Ctrl+C
+  tears both down (`core/dashboard.py`).
+- `deploy.py` now sets Grafana's `allow_embedding`/`cookie_samesite` Helm
+  values so the dashboard's iframe panels aren't silently blocked by
+  Grafana's default `X-Frame-Options: DENY` (PRD §15's mitigation, not
+  previously implemented).
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
@@ -72,6 +93,16 @@ All notable changes to Nexus are documented here. Format based on
 - PyPI package renamed `nexus-platform` → `nexus-gitops`: `nexus-platform`
   turned out to already be taken by an unrelated project. The `nexus` command
   itself is unaffected — this only changes `pip install <name>`.
+- New optional `dashboard` extra (`pip install "nexus-gitops[dashboard]"`) for
+  `fastapi`/`uvicorn` — kept out of the base install so the core CLI stays
+  light for users who never touch the dashboard.
+- Pulled several data-gathering functions out of their Typer commands into
+  `core/`, so the dashboard backend reads cluster state through the exact
+  same code the CLI does rather than a second implementation:
+  `core/chaos.py` (experiment building/apply, the webhook retry),
+  `core/logs.py` (pod log fetch), and `core/status.py` (pod/replica data).
+  Each command module is now a thin wrapper over its `core/` counterpart;
+  no behavior changed.
 
 ### Infrastructure
 - `tests/integration/` — a Kind-based real-cluster suite (PRD §18): full
@@ -86,6 +117,10 @@ All notable changes to Nexus are documented here. Format based on
 - `.github/workflows/ci.yml` — ruff + mypy + unit tests (with an 80% core
   coverage gate) on Python 3.10 and 3.13, plus two Kind e2e jobs (the main
   integration suite, and a separately gated/`continue-on-error` chaos job).
+  A `dashboard-frontend` job now lints, type-checks, and production-builds
+  the Next.js app; `lint-and-unit` installs the `dashboard` extra so the
+  dashboard's own unit tests (mocked FastAPI `TestClient`, mocked
+  subprocess/network) run in CI instead of skipping.
 - `.github/workflows/release.yml` — builds and publishes to PyPI via Trusted
   Publishing (OIDC, no stored token) on a `v*` tag push; re-runs the full
   quality gate first as a safety net.

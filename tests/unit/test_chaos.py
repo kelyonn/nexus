@@ -9,6 +9,7 @@ import yaml
 from typer.testing import CliRunner
 
 from nexus_cli.commands import chaos as chaos_module
+from nexus_cli.core import chaos as core_chaos
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core import preflight
 from nexus_cli.core.output import NexusError
@@ -201,7 +202,7 @@ def test_schedule_disable_pauses_and_reports_suspended(
             return {"metadata": {"name": "my-app-chaos-schedule"}}
         return {
             "metadata": {
-                "annotations": {chaos_module._PAUSE_ANNOTATION: "true"},
+                "annotations": {core_chaos.PAUSE_ANNOTATION: "true"},
             }
         }
 
@@ -238,49 +239,6 @@ def test_schedule_enable_requires_chaos_mesh(
     result = runner.invoke(app, ["chaos", "schedule", "enable"])
     assert result.exit_code != 0
     assert "Chaos Mesh is not installed" in result.output
-
-
-# --- _with_webhook_retry ---
-
-
-def test_with_webhook_retry_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"n": 0}
-
-    def flaky() -> None:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise NexusError(what="apply failed", why='failed calling webhook "vauth.kb.io"')
-
-    monkeypatch.setattr(chaos_module.time, "sleep", lambda s: None)
-    fake_clock = iter([0, 1, 2])  # deadline calc, then one loop retry
-    monkeypatch.setattr(chaos_module.time, "monotonic", lambda: next(fake_clock))
-
-    chaos_module._with_webhook_retry(flaky)
-    assert calls["n"] == 2
-
-
-def test_with_webhook_retry_gives_up_after_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
-    def always_fails() -> None:
-        raise NexusError(what="apply failed", why='failed calling webhook "vauth.kb.io"')
-
-    monkeypatch.setattr(chaos_module.time, "sleep", lambda s: None)
-    fake_clock = iter([0, 100])  # deadline=0+20=20, first retry-check: 100 >= 20 -> give up
-    monkeypatch.setattr(chaos_module.time, "monotonic", lambda: next(fake_clock))
-
-    with pytest.raises(NexusError, match="failed calling webhook"):
-        chaos_module._with_webhook_retry(always_fails)
-
-
-def test_with_webhook_retry_does_not_retry_other_errors(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = {"n": 0}
-
-    def fails_differently() -> None:
-        calls["n"] += 1
-        raise NexusError(what="apply failed", why="some other kubectl error")
-
-    with pytest.raises(NexusError, match="some other kubectl error"):
-        chaos_module._with_webhook_retry(fails_differently)
-    assert calls["n"] == 1
 
 
 def test_chaos_config_loaded(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

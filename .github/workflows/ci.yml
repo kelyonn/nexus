@@ -19,18 +19,47 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
 
-      - name: Install nexus + dev dependencies
-        run: pip install -e ".[dev]"
+      - name: Install nexus + dev + dashboard dependencies
+        run: pip install -e ".[dev,dashboard]"
 
       - name: ruff
         run: ruff check .
 
       - name: mypy
-        run: mypy nexus_cli
+        run: mypy nexus_cli dashboard/backend
 
       # PRD §12/§18: target 80%+ coverage on nexus_cli/core.
       - name: unit tests (with coverage gate)
         run: pytest -q --cov=nexus_cli.core --cov-report=term-missing --cov-fail-under=80
+
+  dashboard-frontend:
+    name: dashboard frontend (lint + typecheck + build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ESLint
+        run: npx eslint .
+
+      - name: TypeScript
+        run: npx tsc --noEmit
+
+      # Compiles the production bundle — the closest CI gets to proving the
+      # dashboard actually builds without a live backend/cluster to run against.
+      - name: Build
+        run: npm run build
 
   integration:
     name: Kind e2e (deploy/status/destroy, idempotency, preflight failures, partial-failure)

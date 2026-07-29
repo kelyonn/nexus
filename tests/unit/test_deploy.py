@@ -184,6 +184,32 @@ def test_deploy_sync_wait_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "check with `nexus status`" in result.output
 
 
+def test_install_monitoring_enables_grafana_iframe_embedding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Grafana denies framing by default, which would break the dashboard's
+    embedded panels (PRD §10.4). Pin both the settings and the `--set` escaping.
+    """
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(helm, "repo_add", lambda name, url: None)
+    monkeypatch.setattr(
+        helm,
+        "upgrade_install",
+        lambda release, chart, **kwargs: captured.update(kwargs),
+    )
+
+    deploy_module._install_monitoring()
+
+    values = captured["values"]
+    assert values == {
+        "grafana.grafana\\.ini.security.allow_embedding": "true",
+        "grafana.grafana\\.ini.security.cookie_samesite": "lax",
+    }
+    # helm --set treats "." as a path separator, so the dot inside the
+    # `grafana.ini` value key must stay escaped or the setting lands nowhere.
+    assert all("grafana\\.ini" in key for key in values)
+
+
 def test_dependency_status_all_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = _minimal_config(monitoring=False, chaos=False)
     monkeypatch.setattr(helm, "release_exists", lambda release, ns: False)

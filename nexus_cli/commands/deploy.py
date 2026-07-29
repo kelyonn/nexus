@@ -70,6 +70,17 @@ PROM_NAMESPACE = "monitoring"
 PROM_REPO = ("prometheus-community", "https://prometheus-community.github.io/helm-charts")
 PROM_CHART = "prometheus-community/kube-prometheus-stack"
 
+# Grafana sets `X-Frame-Options: DENY` by default, which silently blocks the
+# dashboard's embedded metric panels (PRD §10.4). These two settings are what
+# make the iframes work, so they're applied at install time rather than left as
+# a manual post-install step. The `grafana\.ini` escape is required: helm
+# --set treats `.` as a path separator, and that value key really does contain
+# a dot (kube-prometheus-stack → grafana subchart → its `grafana.ini` map).
+GRAFANA_EMBED_VALUES = {
+    "grafana.grafana\\.ini.security.allow_embedding": "true",
+    "grafana.grafana\\.ini.security.cookie_samesite": "lax",
+}
+
 CHAOS_RELEASE = "chaos-mesh"
 CHAOS_NAMESPACE = "chaos-mesh"
 CHAOS_REPO = ("chaos-mesh", "https://charts.chaos-mesh.org")
@@ -86,7 +97,9 @@ def _install_argocd() -> None:
 
 def _install_monitoring() -> None:
     helm.repo_add(*PROM_REPO)
-    helm.upgrade_install(PROM_RELEASE, PROM_CHART, namespace=PROM_NAMESPACE)
+    helm.upgrade_install(
+        PROM_RELEASE, PROM_CHART, namespace=PROM_NAMESPACE, values=GRAFANA_EMBED_VALUES
+    )
 
 
 def _install_chaos() -> None:

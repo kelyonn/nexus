@@ -26,6 +26,11 @@ dev = [
     "ruff",
     "mypy",
     "types-PyYAML",
+    "httpx2",  # only needed for FastAPI's TestClient in tests/unit/test_dashboard_backend.py
+]
+dashboard = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
 ]
 
 [project.scripts]
@@ -47,7 +52,7 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.mypy]
 python_version = "3.10"
-files = ["nexus_cli"]
+files = ["nexus_cli", "dashboard/backend"]
 disallow_untyped_defs = true
 warn_unused_ignores = true
 plugins = ["pydantic.mypy"]
