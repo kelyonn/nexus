@@ -1,0 +1,33 @@
+name: Feature request
+description: Something you wish Nexus did that it doesn't yet.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: The actual workflow or situation, not just the feature name — this makes it much easier to tell whether it fits Nexus's scope.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you want Nexus to do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What are you doing today as a workaround, if anything?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope-check
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked CONTRIBUTING.md's "scope boundaries" section — this doesn't obviously fall outside them (or I'm explicitly proposing to revisit one).
+          required: true

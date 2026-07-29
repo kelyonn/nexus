@@ -33,6 +33,9 @@ dist/
 build/
 *.egg-info/
 
+# --- MkDocs build output (docs_site/ is the source, this is generated) ---
+/site/
+
 # --- Kubernetes / Helm local artifacts ---
 *.tgz
 charts/

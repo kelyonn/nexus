@@ -1,0 +1,62 @@
+name: Bug report
+description: Something didn't work the way the CLI or dashboard says it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you ran, what you expected, what happened instead.
+      placeholder: |
+        Ran `nexus deploy`, expected it to finish in under a minute like the
+        docs say, but it hung for 2 minutes and then printed ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: command-output
+    attributes:
+      label: Full command and output
+      description: The exact command you ran and its complete output — Nexus's errors are supposed to state what/why/fix, so the full text usually matters.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: nexus-version
+    attributes:
+      label: nexus --version
+      placeholder: "nexus 0.1.0.dev0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: cluster-type
+    attributes:
+      label: Cluster type
+      options:
+        - Minikube
+        - Kind
+        - EKS
+        - GKE
+        - AKS
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: nexus-yaml
+    attributes:
+      label: nexus.yaml (redact anything sensitive)
+      render: yaml
+    validations:
+      required: false
+
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: nexus doctor output
+      description: If the bug is deploy/cluster-related, `nexus doctor`'s output is usually the fastest way to rule out an environment problem.
+      render: shell
+    validations:
+      required: false

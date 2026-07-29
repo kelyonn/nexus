@@ -8,6 +8,9 @@ project, fill in one YAML file, run `nexus deploy` — and get GitOps deployment
 (ArgoCD), self-healing, observability (Prometheus + Grafana), and optional
 chaos testing (Chaos Mesh) on **your own cluster**, without a DevOps team.
 
+📖 **[Full documentation](https://kelyonn.github.io/nexus/)** — install guide,
+command reference, `nexus.yaml` schema, architecture, and troubleshooting.
+
 ## Status
 
 ✅ **Phase 1 + Phase 2 (the full CLI) are done.** All ten commands —
@@ -128,8 +131,9 @@ demo is exactly the output `nexus deploy` will produce automatically.
 
 ## Contributing
 
-PRs welcome. Please include what changed, why,
-and how you tested it. Development setup: [INSTALLATION.md](INSTALLATION.md).
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the
+pre-PR gate, and this project's scope boundaries. Development setup notes
+specific to a fresh install: [INSTALLATION.md](INSTALLATION.md).
 
 ## License
 
