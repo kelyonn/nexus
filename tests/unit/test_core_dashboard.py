@@ -174,14 +174,14 @@ def test_grafana_available_false_when_service_missing(monkeypatch: pytest.Monkey
 def test_start_grafana_port_forward_returns_none_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(dashboard, "grafana_available", lambda: False)
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: False)
     assert dashboard.start_grafana_port_forward() is None
 
 
 def test_start_grafana_port_forward_launches_kubectl_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(dashboard, "grafana_available", lambda: True)
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
     captured: dict[str, object] = {}
 
     def fake_popen(args: list[str], **kwargs: object) -> str:
@@ -202,6 +202,97 @@ def test_start_grafana_port_forward_launches_kubectl_when_available(
         "monitoring",
     ]
     assert captured["start_new_session"] is True
+
+
+# --- service_available / start_port_forward (generic) ---
+
+
+def test_service_available_true_when_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"kind": "Service"})
+    assert dashboard.service_available("some-svc", "some-ns") is True
+
+
+def test_service_available_false_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what='services "some-svc" not found')
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.service_available("some-svc", "some-ns") is False
+
+
+def test_start_port_forward_returns_none_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: False)
+    assert dashboard.start_port_forward("some-svc", "some-ns", 1234, 5678) is None
+
+
+def test_start_port_forward_launches_kubectl_with_given_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured["args"] = args
+        captured.update(kwargs)
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    result = dashboard.start_port_forward("some-svc", "some-ns", 1234, 5678)
+
+    assert result == "fake-proc"
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/some-svc",
+        "1234:5678",
+        "-n",
+        "some-ns",
+    ]
+    assert captured["start_new_session"] is True
+
+
+# --- prometheus_available / start_prometheus_port_forward ---
+
+
+def test_prometheus_available_true_when_service_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"kind": "Service"})
+    assert dashboard.prometheus_available() is True
+
+
+def test_prometheus_available_false_when_service_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what='services "kube-prom-stack-kube-prome-prometheus" not found')
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.prometheus_available() is False
+
+
+def test_start_prometheus_port_forward_launches_kubectl_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured["args"] = args
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    result = dashboard.start_prometheus_port_forward()
+
+    assert result == "fake-proc"
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/kube-prom-stack-kube-prome-prometheus",
+        "9090:9090",
+        "-n",
+        "monitoring",
+    ]
 
 
 # --- wait_for_backend_ready ---
