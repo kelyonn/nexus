@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import {
   ApiError,
   Metrics,
@@ -80,9 +80,16 @@ async function isGrafanaReachable(): Promise<boolean> {
   }
 }
 
-export default function AppDetailPage() {
-  const params = useParams<{ name: string }>();
-  const name = decodeURIComponent(params.name);
+// This used to be app/apps/[name]/page.tsx, a dynamic route. A static export
+// (PRD §13 — pip-installable dashboard, no Node runtime required) can't serve
+// arbitrary dynamic segments without knowing every app name at build time, so
+// this reads ?name= instead — same data, same behavior, just a query string.
+// useSearchParams() requires a Suspense boundary for static export builds
+// (see the default export below), which is why the real work lives in this
+// separate inner component.
+function AppDetailContent() {
+  const searchParams = useSearchParams();
+  const name = searchParams.get("name") ?? "";
 
   const [pods, setPods] = useState<PodSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +106,7 @@ export default function AppDetailPage() {
     let cancelled = false;
 
     async function checkHttpMetrics() {
+      if (!name) return;
       try {
         const apps = await listApps();
         const match = apps.find((a) => a.name === name);
@@ -119,6 +127,7 @@ export default function AppDetailPage() {
     let cancelled = false;
 
     async function refreshMetrics() {
+      if (!name) return;
       try {
         const data = await getMetrics(name);
         if (!cancelled) {
@@ -161,6 +170,7 @@ export default function AppDetailPage() {
     let timer: ReturnType<typeof setTimeout>;
 
     async function tick() {
+      if (!name) return;
       try {
         const data = await listPods(name);
         if (!cancelled) {
@@ -186,6 +196,7 @@ export default function AppDetailPage() {
   }, [name]);
 
   async function handleTriggerChaos() {
+    if (!name) return;
     setTriggering(true);
     setChaosMessage(null);
     try {
@@ -203,6 +214,20 @@ export default function AppDetailPage() {
   const panels: readonly { slug: string; label: string }[] = hasHttpMetrics
     ? [...CLUSTER_PANELS, ...HTTP_METRIC_PANELS]
     : CLUSTER_PANELS;
+
+  if (!name) {
+    return (
+      <div>
+        <Link href="/" className="back-link">
+          ← Overview
+        </Link>
+        <p className="error-box" style={{ marginTop: "1rem" }}>
+          No app specified — open this page via a card on the{" "}
+          <Link href="/">Overview</Link> grid.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -290,5 +315,13 @@ export default function AppDetailPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function AppDetailPage() {
+  return (
+    <Suspense fallback={<p className="muted">Loading…</p>}>
+      <AppDetailContent />
+    </Suspense>
   );
 }

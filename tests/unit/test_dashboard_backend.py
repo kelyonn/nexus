@@ -44,14 +44,16 @@ def test_health_endpoint() -> None:
 
 
 def test_cors_restricted_to_frontend_origin() -> None:
+    # Frontend and API now share one origin (the backend's own port) — this
+    # only matters as a fallback for the two loopback spellings, see main.py.
     resp = client.options(
         "/api/apps",
         headers={
-            "Origin": "http://localhost:3001",
+            "Origin": "http://localhost:3002",
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert resp.headers["access-control-allow-origin"] == "http://localhost:3001"
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:3002"
 
 
 # --- GET /api/apps ---

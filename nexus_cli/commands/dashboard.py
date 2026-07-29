@@ -1,9 +1,10 @@
 """``nexus dashboard`` — launch the local browser control panel (PRD §10, §13).
 
-Starts the FastAPI backend, the Next.js frontend, and (best-effort)
-`kubectl port-forward`s to Grafana and Prometheus as subprocesses, waits for
-the backend to be ready, then opens the browser with a fresh per-session
-token in the URL. Ctrl+C tears all of them down cleanly.
+Starts the FastAPI backend (which serves the frontend's static export
+itself, see core/dashboard.py's docstring) and (best-effort) `kubectl
+port-forward`s to Grafana and Prometheus as subprocesses, waits for the
+backend to be ready, then opens the browser with a fresh per-session token
+in the URL. Ctrl+C tears all of them down cleanly.
 """
 
 from __future__ import annotations
@@ -43,7 +44,7 @@ def dashboard() -> None:
     try:
         core_dashboard.check_dashboard_deps_installed()
         core_dashboard.check_backend_source_present()
-        core_dashboard.check_frontend_ready()
+        core_dashboard.check_frontend_built()
         if not kubectl.cluster_reachable():
             raise output.NexusError(
                 what="No reachable Kubernetes cluster.",
@@ -59,7 +60,6 @@ def dashboard() -> None:
     output.step("Starting dashboard backend...")
     backend_proc = core_dashboard.start_backend(token)
     procs.append(backend_proc)
-    procs.append(core_dashboard.start_frontend())
 
     _start_optional_port_forward(
         procs,

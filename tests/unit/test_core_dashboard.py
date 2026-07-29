@@ -72,33 +72,28 @@ def test_check_backend_source_present_raises_with_clone_fix(
     assert "git clone" in exc_info.value.fix.lower() or "clone" in exc_info.value.fix.lower()
 
 
-# --- check_frontend_ready ---
+# --- check_frontend_built ---
 
 
-def test_check_frontend_ready_raises_when_npm_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: None)
-    with pytest.raises(NexusError, match="npm"):
-        dashboard.check_frontend_ready()
-
-
-def test_check_frontend_ready_raises_when_node_modules_missing(
+def test_check_frontend_built_raises_when_out_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: "/usr/bin/npm")
     monkeypatch.setattr(dashboard, "frontend_dir", lambda: tmp_path / "frontend")
     with pytest.raises(NexusError) as exc_info:
-        dashboard.check_frontend_ready()
-    assert "npm install" in exc_info.value.fix
+        dashboard.check_frontend_built()
+    assert "isn't built" in exc_info.value.what
+    assert "npm run build" in exc_info.value.fix
 
 
-def test_check_frontend_ready_passes_when_node_modules_present(
+def test_check_frontend_built_passes_when_out_index_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     frontend = tmp_path / "frontend"
-    (frontend / "node_modules").mkdir(parents=True)
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: "/usr/bin/npm")
+    out = frontend / "out"
+    out.mkdir(parents=True)
+    (out / "index.html").write_text("<html></html>")
     monkeypatch.setattr(dashboard, "frontend_dir", lambda: frontend)
-    dashboard.check_frontend_ready()  # must not raise
+    dashboard.check_frontend_built()  # must not raise
 
 
 # --- generate_token / dashboard_url ---
@@ -110,12 +105,12 @@ def test_generate_token_is_reasonably_long_and_unique() -> None:
     assert len(a) > 20
 
 
-def test_dashboard_url_includes_token_and_frontend_port() -> None:
+def test_dashboard_url_includes_token_and_backend_port() -> None:
     url = dashboard.dashboard_url("abc123")
-    assert url == f"http://localhost:{dashboard.FRONTEND_PORT}/?token=abc123"
+    assert url == f"http://localhost:{dashboard.BACKEND_PORT}/?token=abc123"
 
 
-# --- start_backend / start_frontend ---
+# --- start_backend ---
 
 
 def test_start_backend_passes_token_via_env_and_uses_own_session(
@@ -156,23 +151,6 @@ def test_start_backend_passes_launch_cwd_for_commit_message_lookups(
     dashboard.start_backend("my-token")
 
     assert captured["env"][dashboard.APP_REPO_DIR_ENV_VAR] == str(tmp_path)
-
-
-def test_start_frontend_runs_npm_dev_in_frontend_dir(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    def fake_popen(args: list[str], **kwargs: object) -> str:
-        captured["args"] = args
-        captured.update(kwargs)
-        return "fake-proc"
-
-    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
-    result = dashboard.start_frontend()
-
-    assert result == "fake-proc"
-    assert captured["args"] == ["npm", "run", "dev"]
-    assert captured["cwd"] == str(dashboard.frontend_dir())
-    assert captured["start_new_session"] is True
 
 
 # --- grafana_available / start_grafana_port_forward ---

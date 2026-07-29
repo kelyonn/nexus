@@ -39,8 +39,25 @@ nexus = "nexus_cli.main:app"
 [tool.hatch.version]
 path = "nexus_cli/__init__.py"
 
+# Builds dashboard/frontend's static export before packaging (see
+# hatch_build.py) — scoped to the wheel target only, not sdist: an sdist
+# should stay source-only and buildable without Node, the wheel is the
+# consumable artifact that needs dashboard/frontend/out/ already baked in.
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
 [tool.hatch.build.targets.wheel]
 packages = ["nexus_cli"]
+
+# `dashboard` isn't in `packages` above (that dir also holds the ~large,
+# Node-only `frontend/` source tree, node_modules included, which has no
+# business in a Python wheel) — force-include picks out exactly the two
+# things that do: the backend package itself, and the frontend's *built*
+# static export (dashboard/frontend/out/, produced by the hook above).
+[tool.hatch.build.targets.wheel.force-include]
+"dashboard/__init__.py" = "dashboard/__init__.py"
+"dashboard/backend" = "dashboard/backend"
+"dashboard/frontend/out" = "dashboard/frontend/out"
 
 [tool.ruff]
 line-length = 100

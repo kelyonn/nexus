@@ -73,6 +73,31 @@ All notable changes to Nexus are documented here. Format based on
   values so the dashboard's iframe panels aren't silently blocked by
   Grafana's default `X-Frame-Options: DENY` (PRD §15's mitigation, not
   previously implemented).
+- Dashboard: pod age (App Detail, from `creationTimestamp`), CPU/memory
+  sparklines fed by a new `GET /apps/{name}/metrics` endpoint that proxies
+  Prometheus `query_range` (`core/dashboard.py` gained a generic
+  `start_port_forward()`, reused for both Grafana and Prometheus), and real
+  commit subjects in the GitOps Log (`git.commit_subject()`) instead of a
+  bare SHA (PRD §10.2/§10.3).
+- App-level HTTP metrics (PRD §10.4): optional `app.metricsPath`/
+  `metricsPort` in `nexus.yaml` render a `ServiceMonitor` so
+  kube-prometheus-stack scrapes the app directly, plus three new Grafana
+  dashboards (request rate, error rate, P95 latency). `examples/flask-demo`
+  is instrumented with `prometheus-flask-exporter` as the reference
+  implementation (its checked-in `nexus.yaml` doesn't set `metricsPath`
+  itself, since the pre-built Docker Hub image it deploys predates the
+  instrumentation — see the comment there). The dashboard shows these panels
+  only when the backend confirms a `ServiceMonitor` actually exists for that
+  app.
+- `nexus dashboard` no longer needs Node/npm on the machine running it:
+  `dashboard/frontend` now builds to a static export (`next build` with
+  `output: "export"`), and the FastAPI backend serves it directly alongside
+  its own `/api/*` routes — one process instead of two. A hatchling build
+  hook (`hatch_build.py`) builds the frontend into the wheel automatically;
+  Node is now a maintainer-time requirement for building a release, not a
+  user-time one for running `pip install`. `/apps/[name]` became `/apps?name=`
+  (a static export can't serve arbitrary dynamic segments) with no change to
+  what the page shows.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
@@ -88,6 +113,20 @@ All notable changes to Nexus are documented here. Format based on
   rollback target itself is validated, so a bad `--to-commit` sha or "nothing
   to roll back" fails immediately instead of asking the user to confirm a
   risky action first.
+- `deploy`/`upgrade`/`rollback` no longer time out and report failure on a
+  fully successful rollout: on the ArgoCD version currently installed,
+  `health` can stay `Progressing` indefinitely even once Kubernetes reports
+  the Deployment fully available. `argocd.wait_for_healthy()` now
+  cross-checks ground truth via replica counts when `sync == Synced` and
+  `health == Progressing`, and the three commands print an honest note when
+  this override fired. Chart versions (`argo`/`prometheus`/`chaos`) are also
+  now pinned in `deploy.py` per PRD §15's stated mitigation.
+- `imagePullPolicy: Always` was hardcoded, which made `status.image_pull_fix()`'s
+  own documented Minikube fix (`minikube image load` + redeploy) impossible —
+  the kubelet would just try the registry again and fail the same way. Added
+  `app.imagePullPolicy` (`Always | IfNotPresent | Never`, default `Always`) to
+  `nexus.yaml`, templated it, and updated the fix message to mention setting
+  `IfNotPresent` alongside the load command.
 
 ### Changed
 - PyPI package renamed `nexus-platform` → `nexus-gitops`: `nexus-platform`

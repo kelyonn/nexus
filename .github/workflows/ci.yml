@@ -56,10 +56,49 @@ jobs:
       - name: TypeScript
         run: npx tsc --noEmit
 
-      # Compiles the production bundle — the closest CI gets to proving the
-      # dashboard actually builds without a live backend/cluster to run against.
-      - name: Build
+      # Compiles the production bundle. NEXUS_STATIC_EXPORT=1 matches what
+      # actually ships (see next.config.ts) — building without it would only
+      # prove the dev-mode config compiles, not the one `nexus dashboard`
+      # and the packaged wheel depend on.
+      - name: Build (static export)
         run: npm run build
+        env:
+          NEXUS_STATIC_EXPORT: "1"
+
+  wheel-build:
+    name: wheel packaging (dashboard frontend bundled, no Node at install time)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      # Node is needed here (hatch_build.py shells out to npm) but not by
+      # whoever later installs this wheel — that's the whole point of this
+      # job: catch a packaging regression before it ships an empty dashboard.
+      - name: Build wheel
+        run: pip install build && python -m build --wheel
+
+      - name: Frontend static export landed in the wheel
+        run: |
+          python -c "
+          import zipfile, glob, sys
+          path = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(path).namelist()
+          required = 'dashboard/frontend/out/index.html'
+          assert required in names, f'{required} missing from {path}'
+          assert not any('node_modules' in n for n in names), 'node_modules leaked into the wheel'
+          print(f'OK: {required} present, node_modules absent, {len(names)} files total')
+          "
 
   integration:
     name: Kind e2e (deploy/status/destroy, idempotency, preflight failures, partial-failure)

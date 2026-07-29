@@ -50,7 +50,7 @@ export default function OverviewPage() {
       {apps && apps.length > 0 && (
         <div className="grid">
           {apps.map((app) => (
-            <Link key={app.name} href={`/apps/${encodeURIComponent(app.name)}`} className="card">
+            <Link key={app.name} href={`/apps?name=${encodeURIComponent(app.name)}`} className="card">
               <span className="card-title">{app.name}</span>
               <span className="muted">
                 {app.available_replicas} / {app.desired_replicas} replicas
