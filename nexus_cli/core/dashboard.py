@@ -39,11 +39,17 @@ SHUTDOWN_GRACE_PERIOD = 5
 TOKEN_ENV_VAR = "NEXUS_DASHBOARD_TOKEN"
 
 # Must match deploy.py's PROM_RELEASE ("kube-prom-stack") — the
-# kube-prometheus-stack chart names its Grafana Service "<release>-grafana".
+# kube-prometheus-stack chart names its Grafana Service "<release>-grafana"
+# and its Prometheus Service "<release>-kube-prome-prometheus".
 GRAFANA_NAMESPACE = "monitoring"
 GRAFANA_SERVICE = "kube-prom-stack-grafana"
 GRAFANA_LOCAL_PORT = 3000
 GRAFANA_REMOTE_PORT = 80
+
+PROMETHEUS_NAMESPACE = "monitoring"
+PROMETHEUS_SERVICE = "kube-prom-stack-kube-prome-prometheus"
+PROMETHEUS_LOCAL_PORT = 9090
+PROMETHEUS_REMOTE_PORT = 9090
 
 
 def repo_root() -> Path:
@@ -130,45 +136,66 @@ def start_frontend() -> subprocess.Popen[bytes]:
     )
 
 
-def grafana_available() -> bool:
-    """Whether the cluster has a Grafana Service to port-forward to.
+def service_available(service: str, namespace: str) -> bool:
+    """Whether a Service exists to port-forward to.
 
-    Best-effort: kubectl missing, cluster unreachable, or monitoring never
-    enabled all just mean "no Grafana" here — none of that should stop
-    ``nexus dashboard`` itself from starting, since the Metrics panel already
-    degrades gracefully (its own reachability check shows setup
-    instructions) when there's nothing to forward to.
+    Best-effort: kubectl missing, cluster unreachable, or the component never
+    installed all just mean "nothing to forward to" here — none of that
+    should stop ``nexus dashboard`` itself from starting, since callers
+    (Metrics panel, sparklines) already degrade gracefully on their own when
+    there's nothing listening on the other end.
     """
     try:
-        kubectl.get_json("svc", namespace=GRAFANA_NAMESPACE, name=GRAFANA_SERVICE)
+        kubectl.get_json("svc", namespace=namespace, name=service)
     except NexusError:
         return False
     return True
 
 
-def start_grafana_port_forward() -> subprocess.Popen[bytes] | None:
-    """``kubectl port-forward`` to Grafana, or ``None`` if there's nothing to forward to.
+def start_port_forward(
+    service: str, namespace: str, local_port: int, remote_port: int
+) -> subprocess.Popen[bytes] | None:
+    """``kubectl port-forward`` to a Service, or ``None`` if it doesn't exist.
 
-    Makes the dashboard's Metrics panel work out of the box instead of
-    requiring the user to run this command themselves in another terminal —
-    PRD §10.4's iframe is only useful if something is actually listening on
-    the other end. If port 3000 is already taken (another instance, a manual
-    port-forward already running), kubectl's own error prints directly since
-    output isn't captured; the panel's reachability check still degrades
-    gracefully either way.
+    Used for both Grafana and Prometheus so the dashboard's Metrics panel and
+    sparklines work out of the box instead of requiring the user to run this
+    command themselves in another terminal. If the local port is already
+    taken (another instance, a manual port-forward already running),
+    kubectl's own error prints directly since output isn't captured; callers'
+    own reachability checks still degrade gracefully either way.
     """
-    if not grafana_available():
+    if not service_available(service, namespace):
         return None
     return subprocess.Popen(
         [
             "kubectl",
             "port-forward",
-            f"svc/{GRAFANA_SERVICE}",
-            f"{GRAFANA_LOCAL_PORT}:{GRAFANA_REMOTE_PORT}",
+            f"svc/{service}",
+            f"{local_port}:{remote_port}",
             "-n",
-            GRAFANA_NAMESPACE,
+            namespace,
         ],
         start_new_session=True,
+    )
+
+
+def grafana_available() -> bool:
+    return service_available(GRAFANA_SERVICE, GRAFANA_NAMESPACE)
+
+
+def start_grafana_port_forward() -> subprocess.Popen[bytes] | None:
+    return start_port_forward(
+        GRAFANA_SERVICE, GRAFANA_NAMESPACE, GRAFANA_LOCAL_PORT, GRAFANA_REMOTE_PORT
+    )
+
+
+def prometheus_available() -> bool:
+    return service_available(PROMETHEUS_SERVICE, PROMETHEUS_NAMESPACE)
+
+
+def start_prometheus_port_forward() -> subprocess.Popen[bytes] | None:
+    return start_port_forward(
+        PROMETHEUS_SERVICE, PROMETHEUS_NAMESPACE, PROMETHEUS_LOCAL_PORT, PROMETHEUS_REMOTE_PORT
     )
 
 
@@ -228,6 +255,9 @@ __all__ = [
     "GRAFANA_LOCAL_PORT",
     "GRAFANA_NAMESPACE",
     "GRAFANA_SERVICE",
+    "PROMETHEUS_LOCAL_PORT",
+    "PROMETHEUS_NAMESPACE",
+    "PROMETHEUS_SERVICE",
     "TOKEN_ENV_VAR",
     "backend_dir",
     "check_backend_source_present",
@@ -237,10 +267,14 @@ __all__ = [
     "frontend_dir",
     "generate_token",
     "grafana_available",
+    "prometheus_available",
     "repo_root",
+    "service_available",
     "shutdown",
     "start_backend",
     "start_frontend",
     "start_grafana_port_forward",
+    "start_port_forward",
+    "start_prometheus_port_forward",
     "wait_for_backend_ready",
 ]
