@@ -49,6 +49,9 @@ output, not a mockup.
   validation rule.
 - **[Architecture](architecture.md)** — how the CLI, the generated manifests,
   ArgoCD, and the local dashboard fit together.
+- **[Multiple environments](multi-environment.md)** — running staging and
+  prod from separate `nexus.yaml` files, and the two fields that actually
+  keep them from colliding.
 - **[Troubleshooting](troubleshooting.md)** — real problems hit during
   development, and their fixes.
 - **[Cloud quick-starts](cloud/index.md)** — EKS/GKE/AKS notes (⚠️ untested

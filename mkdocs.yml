@@ -47,6 +47,7 @@ nav:
   - Command reference: commands.md
   - nexus.yaml schema: schema.md
   - Architecture: architecture.md
+  - Multiple environments: multi-environment.md
   - Troubleshooting: troubleshooting.md
   - Cloud quick-starts:
       - Overview: cloud/index.md
