@@ -11,7 +11,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass
 
-from nexus_cli.core import kubectl
+from nexus_cli.core import kubectl, status
 from nexus_cli.core.output import NexusError
 
 NAMESPACE = "argocd"
@@ -143,19 +143,52 @@ def trigger_sync(name: str) -> None:
     )
 
 
+def _deployment_actually_ready(name: str) -> bool:
+    """Ground truth from the Deployment itself, bypassing ArgoCD's own health check.
+
+    Namespace and Deployment name both equal ``name`` — one app per namespace,
+    same convention ``commands/status.py`` relies on.
+    """
+    try:
+        desired, available = status.replica_counts(name, name)
+    except NexusError:
+        return False
+    return desired > 0 and available >= desired
+
+
 def wait_for_healthy(
     name: str,
     *,
     timeout: int = DEFAULT_TIMEOUT,
     poll_interval: int = DEFAULT_POLL_INTERVAL,
 ) -> ArgoAppStatus:
-    """Poll until the Application is Synced + Healthy, or raise on timeout."""
+    """Poll until the Application is Synced + Healthy, or raise on timeout.
+
+    On ArgoCD v3.4.5 (currently the version ``nexus deploy`` installs),
+    ``health`` can stay stuck on ``Progressing`` indefinitely for a Deployment
+    Kubernetes itself reports fully available — an upstream health-check quirk
+    on this resource/version, observed stable for 90+ seconds and unchanged by
+    a manual hard-refresh (see docs/IMPLEMENTATION-PLAN.md Week 1 finding #3).
+    Rather than have every ``deploy``/``upgrade``/``rollback`` time out and
+    print a false failure for a rollout that actually succeeded, ``Synced`` +
+    ``Progressing`` is accepted once the Deployment's own replica counts
+    confirm it's really ready. ``Degraded``/``Missing`` are never overridden —
+    those are ArgoCD reporting an actual problem, not a stale status.
+
+    The returned status still carries ArgoCD's real (possibly ``Progressing``)
+    ``health_status`` — this function decides whether to keep waiting, not
+    what to claim happened. Callers that want to tell the user their own
+    health check disagreed with ArgoCD's should check for that themselves.
+    """
     deadline = time.monotonic() + timeout
     last: ArgoAppStatus | None = None
     while time.monotonic() < deadline:
         last = get_status(name)
-        if last and last.sync_status == "Synced" and last.health_status == "Healthy":
-            return last
+        if last and last.sync_status == "Synced":
+            if last.health_status == "Healthy":
+                return last
+            if last.health_status == "Progressing" and _deployment_actually_ready(name):
+                return last
         time.sleep(poll_interval)
     detail = f"sync={last.sync_status}, health={last.health_status}" if last else "not found"
     raise NexusError(

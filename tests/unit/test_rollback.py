@@ -216,6 +216,37 @@ def test_rollback_default_happy_path_reverts_pushes_and_reports(
     assert "rolled back to myrepo/app:v1" in result.output
 
 
+def test_rollback_reports_argocd_health_quirk_instead_of_silence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """wait_for_healthy succeeding via the ground-truth override (ArgoCD's
+    v3.4.5 health:Progressing quirk) must still be visible to the user.
+    """
+    _setup_common(tmp_path, monkeypatch)
+    commit = _commit("deadbeef" * 5, "deadbee")
+    monkeypatch.setattr(rollback_module.git, "log_image_commits", lambda: [commit])
+    monkeypatch.setattr(rollback_module.gitops, "image_at_commit", lambda sha, **k: "myrepo/app:v1")
+    monkeypatch.setattr(rollback_module.git, "revert", lambda sha: None)
+    monkeypatch.setattr(rollback_module.git, "push", lambda remote, branch: None)
+    monkeypatch.setattr(rollback_module.gitops, "summarize_pods", lambda ns: [])
+    monkeypatch.setattr(
+        rollback_module.argocd,
+        "wait_for_healthy",
+        lambda name, **k: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Progressing",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+
+    result = runner.invoke(app, ["rollback"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "ArgoCD itself still reports health=Progressing" in result.output
+    assert "rolled back to myrepo/app:v1" in result.output
+
+
 def test_rollback_revert_failure_propagates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
