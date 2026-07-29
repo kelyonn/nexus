@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from dashboard.backend import auth as auth_module  # noqa: E402
 from dashboard.backend.main import app  # noqa: E402
-from dashboard.backend.routes import core_chaos, core_status  # noqa: E402
+from dashboard.backend.routes import core_chaos, core_status, prometheus  # noqa: E402
 from nexus_cli.core import argocd  # noqa: E402
 from nexus_cli.core.output import NexusError  # noqa: E402
 
@@ -286,3 +286,59 @@ def test_synclog_empty_history_for_never_synced_app(monkeypatch: pytest.MonkeyPa
     resp = client.get("/api/apps/my-app/synclog")
     assert resp.status_code == 200
     assert resp.json()["history"] == []
+
+
+# --- GET /api/apps/{name}/metrics ---
+
+
+def test_metrics_returns_404_for_unknown_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: None)
+    resp = client.get("/api/apps/ghost-app/metrics")
+    assert resp.status_code == 404
+
+
+def test_metrics_returns_cpu_and_memory_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+
+    def fake_query_range(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        if "cpu" in promql:
+            return [(1000.0, 0.1), (1015.0, 0.2)]
+        return [(1000.0, 1048576.0)]
+
+    monkeypatch.setattr(prometheus, "query_range", fake_query_range)
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cpu"] == [
+        {"timestamp": 1000.0, "value": 0.1},
+        {"timestamp": 1015.0, "value": 0.2},
+    ]
+    assert body["memory"] == [{"timestamp": 1000.0, "value": 1048576.0}]
+
+
+def test_metrics_bad_window_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    resp = client.get("/api/apps/my-app/metrics", params={"window": "nonsense"})
+    assert resp.status_code == 400
+    assert "Unsupported metrics window" in resp.json()["detail"]
+
+
+def test_metrics_prometheus_unreachable_returns_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+
+    def raise_unreachable(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        raise NexusError(what="Could not reach Prometheus.", why="Connection refused")
+
+    monkeypatch.setattr(prometheus, "query_range", raise_unreachable)
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 502
+    assert "Could not reach Prometheus" in resp.json()["detail"]
+
+
+def test_metrics_empty_when_app_has_no_series_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A freshly deployed app with no traffic yet is empty data, not an error."""
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(prometheus, "query_range", lambda promql, window_seconds: [])
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    assert resp.json() == {"cpu": [], "memory": []}
