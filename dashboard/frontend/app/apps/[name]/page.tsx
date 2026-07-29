@@ -18,6 +18,18 @@ const GRAFANA_BASE = process.env.NEXT_PUBLIC_GRAFANA_URL ?? "http://localhost:30
 const GRAFANA_CHECK_INTERVAL_MS = 10000;
 const GRAFANA_CHECK_TIMEOUT_MS = 2000;
 
+// `nexus deploy` generates all four of these dashboards per app (see
+// templates/grafana-dashboard.yaml.j2) — this just needs to embed all of
+// them, not invent new metrics. Each is real cluster data (kube-state-metrics
+// + cAdvisor via kube-prometheus-stack), not app-level instrumentation, so
+// no changes to the deployed app are needed for any of these to work.
+const GRAFANA_PANELS = [
+  { slug: "availability", label: "Pod Availability" },
+  { slug: "restarts", label: "Pod Restarts" },
+  { slug: "resources", label: "CPU / Memory Usage" },
+  { slug: "replicas", label: "Desired vs Running" },
+] as const;
+
 // A cross-origin iframe that fails to load (connection refused, nothing
 // port-forwarded) just renders as a blank/broken frame with no error event
 // we can hook into — indistinguishable from "actually broken" to a user who
@@ -153,22 +165,31 @@ export default function AppDetailPage() {
           </p>
         )}
         {grafanaReachable !== false && (
-          <iframe
-            className="grafana-frame"
-            src={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-availability/${encodeURIComponent(name)}-pod-availability?orgId=1&refresh=10s&kiosk`}
-            title={`${name} Grafana dashboard`}
-          />
+          <div className="metrics-grid">
+            {GRAFANA_PANELS.map((panel) => (
+              <div key={panel.slug}>
+                <p className="muted" style={{ marginBottom: "0.3rem" }}>
+                  {panel.label}
+                </p>
+                <iframe
+                  className="grafana-frame"
+                  src={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-${panel.slug}/${encodeURIComponent(name)}-${panel.slug}?orgId=1&refresh=10s&kiosk`}
+                  title={`${name} ${panel.label}`}
+                />
+                <p style={{ marginTop: "0.3rem" }}>
+                  <a
+                    href={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-${panel.slug}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="muted"
+                  >
+                    Open full dashboard →
+                  </a>
+                </p>
+              </div>
+            ))}
+          </div>
         )}
-        <p style={{ marginTop: "0.5rem" }}>
-          <a
-            href={`${GRAFANA_BASE}/d/${encodeURIComponent(name)}-availability`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="muted"
-          >
-            Open full Grafana dashboard →
-          </a>
-        </p>
       </div>
     </div>
   );
