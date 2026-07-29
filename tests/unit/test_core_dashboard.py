@@ -138,6 +138,26 @@ def test_start_backend_passes_token_via_env_and_uses_own_session(
     assert captured["cwd"] == str(dashboard.repo_root())
 
 
+def test_start_backend_passes_launch_cwd_for_commit_message_lookups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The backend's own process cwd is fixed to repo_root() (it needs to
+    import dashboard.backend.main), so without this it has no way to find
+    the app's repo for GitOps Log commit-message lookups.
+    """
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured.update(kwargs)
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(dashboard.os, "getcwd", lambda: str(tmp_path))
+    dashboard.start_backend("my-token")
+
+    assert captured["env"][dashboard.APP_REPO_DIR_ENV_VAR] == str(tmp_path)
+
+
 def test_start_frontend_runs_npm_dev_in_frontend_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 

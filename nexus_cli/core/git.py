@@ -130,6 +130,22 @@ def show_file_at_commit(sha: str, filepath: str, *, path: str = ".") -> str | No
     return result.stdout
 
 
+def commit_subject(sha: str, *, path: str = ".") -> str | None:
+    """The commit's subject line, or None if ``sha`` doesn't resolve in ``path``.
+
+    Used by the dashboard's GitOps Log (PRD §10.3) to show a commit message
+    next to ArgoCD's sync history, which carries only a revision and a
+    timestamp — never a message. ``None`` is an ordinary result, not an
+    error: the SHA may belong to a different app's repo entirely (the
+    dashboard can show apps from multiple repos; this only has one local
+    checkout to look in), or simply not be fetched locally.
+    """
+    result = _run(["-C", path, "log", "-1", "--format=%s", sha], check=False)
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
 @dataclass(frozen=True)
 class ImageCommit:
     sha: str
