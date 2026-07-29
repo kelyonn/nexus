@@ -3,12 +3,22 @@
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, PodSummary, listPods, triggerChaos } from "@/lib/api";
+import { ApiError, Metrics, PodSummary, getMetrics, listPods, triggerChaos } from "@/lib/api";
 import { formatAge } from "@/lib/age";
+import Sparkline from "@/app/Sparkline";
 
 const NORMAL_POLL_MS = 3000;
 const RECOVERY_POLL_MS = 1000;
 const RECOVERY_WINDOW_MS = 20000;
+const METRICS_POLL_MS = 15000; // 5m-rate CPU data doesn't change meaningfully faster than this
+
+function formatCpu(cores: number): string {
+  return `${Math.round(cores * 1000)}m`;
+}
+
+function formatMemory(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
+}
 
 // Grafana isn't exposed outside the cluster by `nexus deploy` — doing so
 // would need an Ingress/NodePort decision this project hasn't made. Instead
@@ -63,6 +73,33 @@ export default function AppDetailPage() {
   const recoveryUntil = useRef<number>(0);
   const [recoveryActive, setRecoveryActive] = useState(false);
   const [grafanaReachable, setGrafanaReachable] = useState<boolean | null>(null);
+  const [metrics, setMetrics] = useState<Metrics | null>(null);
+  const [metricsError, setMetricsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function refreshMetrics() {
+      try {
+        const data = await getMetrics(name);
+        if (!cancelled) {
+          setMetrics(data);
+          setMetricsError(null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setMetricsError(err instanceof ApiError ? err.message : "Could not fetch metrics.");
+        }
+      }
+    }
+
+    refreshMetrics();
+    const id = setInterval(refreshMetrics, METRICS_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [name]);
 
   useEffect(() => {
     let cancelled = false;
@@ -155,6 +192,18 @@ export default function AppDetailPage() {
                 {pod.problem && <span className="badge badge-danger">{pod.problem}</span>}
               </div>
             ))}
+          </div>
+        )}
+      </div>
+
+      <div className="section">
+        <h2>Resource Usage</h2>
+        {metricsError && <p className="error-box">{metricsError}</p>}
+        {!metricsError && metrics === null && <p className="muted">Loading…</p>}
+        {!metricsError && metrics !== null && (
+          <div className="metrics-grid">
+            <Sparkline label="CPU" points={metrics.cpu} formatValue={formatCpu} />
+            <Sparkline label="Memory" points={metrics.memory} formatValue={formatMemory} />
           </div>
         )}
       </div>

@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from dashboard.backend import prometheus
 from dashboard.backend.auth import require_token
 from nexus_cli.core import argocd, kubectl
 from nexus_cli.core import chaos as core_chaos
@@ -56,6 +57,16 @@ class SyncLogResponse(BaseModel):
     health_status: str
     last_sync_time: str | None
     history: list[SyncEventOut]
+
+
+class MetricPoint(BaseModel):
+    timestamp: float
+    value: float
+
+
+class MetricsResponse(BaseModel):
+    cpu: list[MetricPoint]
+    memory: list[MetricPoint]
 
 
 def _app_or_404(name: str) -> argocd.ArgoAppStatus:
@@ -112,7 +123,10 @@ def list_pods(name: str) -> list[PodSummary]:
         raise HTTPException(status_code=502, detail=str(err)) from err
     return [
         PodSummary(
-            name=p.name, phase=p.phase, restarts=p.restarts, problem=p.problem,
+            name=p.name,
+            phase=p.phase,
+            restarts=p.restarts,
+            problem=p.problem,
             created_at=p.created_at,
         )
         for p in pods
@@ -132,6 +146,30 @@ def trigger_chaos(name: str, body: ChaosRequest) -> ChaosResponse:
     except NexusError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     return ChaosResponse(run_name=run_name)
+
+
+@router.get("/apps/{name}/metrics", response_model=MetricsResponse)
+def app_metrics(name: str, window: str = prometheus.DEFAULT_WINDOW) -> MetricsResponse:
+    """CPU/memory sparkline data for the App Detail view (PRD §10.2).
+
+    Proxies Prometheus with the exact same PromQL the CPU/Memory Grafana
+    dashboard already runs (templates/grafana-dashboard.yaml.j2), so the
+    sparklines and the full panel can never disagree.
+    """
+    _app_or_404(name)
+    try:
+        window_seconds = prometheus.parse_window(window)
+    except NexusError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    try:
+        cpu = prometheus.query_range(prometheus.cpu_query(name), window_seconds)
+        memory = prometheus.query_range(prometheus.memory_query(name), window_seconds)
+    except NexusError as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    return MetricsResponse(
+        cpu=[MetricPoint(timestamp=ts, value=v) for ts, v in cpu],
+        memory=[MetricPoint(timestamp=ts, value=v) for ts, v in memory],
+    )
 
 
 @router.get("/apps/{name}/synclog", response_model=SyncLogResponse)

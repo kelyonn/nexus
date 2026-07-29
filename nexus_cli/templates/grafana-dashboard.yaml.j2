@@ -108,6 +108,14 @@ data:
         ]
       }
     }
+  # No `container=` label filter here, unlike pod-restarts.json below — these
+  # two queries hit cAdvisor (job=kubelet), not kube-state-metrics, and on at
+  # least one real cluster (Minikube v1.36.2 / cAdvisor's kubelet-embedded
+  # exporter) cAdvisor's per-container cgroup metrics carry no `container`
+  # label at all, only the pod-level cgroup aggregate (namespace+pod, no
+  # container). Filtering on `container` here silently returns zero series
+  # forever. `namespace` alone is safe and sufficient given one app per
+  # namespace is already a hard invariant of this project.
   resource-usage.json: |-
     {
       "uid": "{{ app.name }}-resources",
@@ -126,7 +134,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{{ app.name }}\",container=\"{{ app.name }}\"}[5m]))",
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{{ app.name }}\"}[5m]))",
               "legendFormat": "cpu"
             }
           ],
@@ -154,7 +162,7 @@ data:
           "targets": [
             {
               "refId": "A",
-              "expr": "sum(container_memory_working_set_bytes{namespace=\"{{ app.name }}\",container=\"{{ app.name }}\"})",
+              "expr": "sum(container_memory_working_set_bytes{namespace=\"{{ app.name }}\"})",
               "legendFormat": "memory"
             }
           ],

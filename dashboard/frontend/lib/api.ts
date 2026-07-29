@@ -37,6 +37,16 @@ export interface SyncLog {
   history: SyncEvent[];
 }
 
+export interface MetricPoint {
+  timestamp: number;
+  value: number;
+}
+
+export interface Metrics {
+  cpu: MetricPoint[];
+  memory: MetricPoint[];
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -65,6 +75,11 @@ export function listPods(name: string): Promise<PodSummary[]> {
 
 export function getSyncLog(name: string): Promise<SyncLog> {
   return apiGet<SyncLog>(`/apps/${encodeURIComponent(name)}/synclog`);
+}
+
+export function getMetrics(name: string, window = "15m"): Promise<Metrics> {
+  const params = new URLSearchParams({ window });
+  return apiGet<Metrics>(`/apps/${encodeURIComponent(name)}/metrics?${params}`);
 }
 
 export async function triggerChaos(
