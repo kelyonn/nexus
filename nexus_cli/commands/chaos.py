@@ -1,75 +1,32 @@
 """``nexus chaos`` — one-shot pod-kill experiments and the recurring schedule
 (PRD §7.6, §7.7).
 
-``chaos run`` applies a one-shot ``PodChaos`` CR built directly from the
-legacy ``pod-kill.yaml`` shape (PRD §0 maps both ``pod-kill.yaml`` and
-``pod-kill-schedule.yaml`` onto the single ``podchaos.yaml.j2`` *schedule*
-template — the one-shot run intentionally isn't part of that declarative,
-config-driven template set, since each run needs a unique name and isn't
-meant to be git-synced).
+This is the terminal-facing half: option parsing, preflight, and the recovery
+narration a human watches after a kill. Building and applying the experiments
+themselves lives in ``core/chaos.py``, so the dashboard's chaos endpoint
+(PRD §10.2) triggers the exact same experiments without going through Typer.
 
-``chaos schedule enable``/``disable`` manage the recurring ``Schedule`` CR
-(``podchaos.yaml.j2``). Chaos Mesh has no ``spec`` field for pausing a
-Schedule — pausing is done via the ``experiment.chaos-mesh.org/pause``
-annotation (confirmed against https://chaos-mesh.org/docs/define-scheduling-rules/),
-which also pauses any already-running experiment, unlike a plain CronJob
-suspend.
-
-Live-verified finding: Chaos Mesh's admission webhook can still be starting
-up for a few seconds right after ``helm upgrade --install --wait`` reports
-the release ready (its controller pods are ``Running`` before the webhook
-server is actually serving) — a ``kubectl apply``/``patch`` against a
-chaos-mesh resource run immediately after a fresh install can fail with
-``failed calling webhook "vauth.kb.io"``, then succeed a few seconds later
-with no other change. Since ``nexus chaos ...`` right after the ``nexus
-deploy`` that first installs Chaos Mesh is exactly the common case, mutating
-calls to chaos-mesh resources retry briefly on that specific error instead
-of failing a command whose whole point is to run right after install.
+``chaos run`` applies a one-shot ``PodChaos``. ``chaos schedule
+enable``/``disable`` manage the recurring ``Schedule`` CR
+(``podchaos.yaml.j2``) via Chaos Mesh's pause annotation — see
+``core/chaos.py`` for why an annotation rather than a spec field, and for the
+admission-webhook race the mutating calls retry around.
 """
 
 from __future__ import annotations
 
-import json
 import time
-import uuid
-from collections.abc import Callable
 
 import typer
-import yaml
 
+from nexus_cli.core import chaos as core_chaos
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core import kubectl, output, preflight, render
 
-CHAOS_NAMESPACE = "chaos-mesh"
-_VALID_ACTIONS = {"pod-kill", "pod-failure", "container-kill"}
-_PAUSE_ANNOTATION = "experiment.chaos-mesh.org/pause"
+CHAOS_NAMESPACE = core_chaos.NAMESPACE
 
-RUN_DURATION = "30s"
 RECOVERY_TIMEOUT = 60
 RECOVERY_POLL_INTERVAL = 2
-
-_WEBHOOK_ERROR_MARKER = "failed calling webhook"
-WEBHOOK_RETRY_TIMEOUT = 20
-WEBHOOK_RETRY_INTERVAL = 2
-
-
-def _with_webhook_retry(fn: Callable[[], object]) -> None:
-    """Retry ``fn`` briefly if it fails with Chaos Mesh's webhook-not-ready
-    error (see module docstring); any other NexusError re-raises immediately.
-    """
-    deadline = time.monotonic() + WEBHOOK_RETRY_TIMEOUT
-    while True:
-        try:
-            fn()
-            return
-        except output.NexusError as err:
-            if _WEBHOOK_ERROR_MARKER not in (err.why or "") or time.monotonic() >= deadline:
-                raise
-            time.sleep(WEBHOOK_RETRY_INTERVAL)
-
-
-def _schedule_name(app_name: str) -> str:
-    return f"{app_name}-chaos-schedule"
 
 
 def _ensure_ready(config_path: str) -> nexus_config.NexusConfig:
@@ -98,16 +55,6 @@ def _ensure_ready(config_path: str) -> nexus_config.NexusConfig:
     return cfg
 
 
-def _list_pods(namespace: str) -> list[dict]:
-    doc = kubectl.get_json("pods", namespace=namespace)
-    items: list[dict] = doc.get("items", [])
-    return items
-
-
-def _pod_names(namespace: str) -> set[str]:
-    return {item["metadata"]["name"] for item in _list_pods(namespace)}
-
-
 def _report_recovery(
     namespace: str,
     before: set[str],
@@ -128,7 +75,7 @@ def _report_recovery(
     killed: set[str] = set()
     while time.monotonic() < deadline:
         time.sleep(poll_interval)
-        items = _list_pods(namespace)
+        items = core_chaos.list_pod_items(namespace)
         current = {item["metadata"]["name"] for item in items}
         newly_gone = before - current
         if newly_gone and not killed:
@@ -156,40 +103,18 @@ def run(
     ),
 ) -> None:
     """Trigger a one-shot PodChaos experiment against the app's pods."""
-    if action not in _VALID_ACTIONS:
-        err = output.NexusError(
-            what=f"Unknown chaos action '{action}'.",
-            why=f"Supported actions: {', '.join(sorted(_VALID_ACTIONS))}.",
-            fix="Pass one of the supported actions to --action.",
-        )
+    try:
+        core_chaos.validate_action(action)
+    except output.NexusError as err:
         output.print_error(err)
-        raise typer.Exit(code=1)
+        raise typer.Exit(code=1) from err
 
     cfg = _ensure_ready(config_path)
     namespace = cfg.app.name
-    mode = "all" if kill_all else "one"
-    run_name = f"{namespace}-chaos-{uuid.uuid4().hex[:8]}"
 
-    manifest = {
-        "apiVersion": "chaos-mesh.org/v1alpha1",
-        "kind": "PodChaos",
-        "metadata": {
-            "name": run_name,
-            "namespace": CHAOS_NAMESPACE,
-            "labels": {"app": namespace, "managed-by": "nexus"},
-        },
-        "spec": {
-            "action": action,
-            "mode": mode,
-            "selector": {"namespaces": [namespace], "labelSelectors": {"app": namespace}},
-            "duration": RUN_DURATION,
-        },
-    }
-
-    before = _pod_names(namespace)
-    text = yaml.safe_dump(manifest, sort_keys=False)
+    before = core_chaos.pod_names(namespace)
     try:
-        _with_webhook_retry(lambda: kubectl.apply_manifest(text))
+        run_name = core_chaos.run_experiment(namespace, action=action, kill_all=kill_all)
     except output.NexusError as err:
         output.print_error(err)
         raise typer.Exit(code=1) from err
@@ -199,21 +124,8 @@ def run(
     _report_recovery(namespace, before)
 
 
-def _patch_pause_annotation(name: str, *, paused: bool) -> None:
-    value = "true" if paused else None
-    patch = json.dumps({"metadata": {"annotations": {_PAUSE_ANNOTATION: value}}})
-    _with_webhook_retry(
-        lambda: kubectl.run(
-            ["patch", "schedule", name, "-n", CHAOS_NAMESPACE, "--type", "merge", "-p", patch]
-        )
-    )
-
-
 def _report_schedule_status(cfg: nexus_config.NexusConfig, name: str) -> None:
-    doc = kubectl.get_json("schedule", namespace=CHAOS_NAMESPACE, name=name)
-    annotations = doc.get("metadata", {}).get("annotations", {}) or {}
-    paused = annotations.get(_PAUSE_ANNOTATION) == "true"
-    state = "Suspended" if paused else "Active"
+    state = "Suspended" if core_chaos.is_schedule_paused(name) else "Active"
     output.step(f"Schedule: {cfg.platform.chaosSchedule} — {state}")
 
 
@@ -224,11 +136,11 @@ def schedule_enable(
 ) -> None:
     """Apply the recurring PodChaos schedule, resuming it if it was suspended."""
     cfg = _ensure_ready(config_path)
-    name = _schedule_name(cfg.app.name)
+    name = core_chaos.schedule_name(cfg.app.name)
     try:
         text = render.render_template("podchaos", cfg)
-        _with_webhook_retry(lambda: kubectl.apply_manifest(text))
-        _patch_pause_annotation(name, paused=False)
+        core_chaos.with_webhook_retry(lambda: kubectl.apply_manifest(text))
+        core_chaos.patch_pause_annotation(name, paused=False)
     except output.NexusError as err:
         output.print_error(err)
         raise typer.Exit(code=1) from err
@@ -243,7 +155,7 @@ def schedule_disable(
 ) -> None:
     """Suspend the recurring PodChaos schedule (does not delete it)."""
     cfg = _ensure_ready(config_path)
-    name = _schedule_name(cfg.app.name)
+    name = core_chaos.schedule_name(cfg.app.name)
     try:
         kubectl.get_json("schedule", namespace=CHAOS_NAMESPACE, name=name)
     except output.NexusError as err:
@@ -255,7 +167,7 @@ def schedule_disable(
         output.print_error(friendly)
         raise typer.Exit(code=1) from err
     try:
-        _patch_pause_annotation(name, paused=True)
+        core_chaos.patch_pause_annotation(name, paused=True)
     except output.NexusError as err:
         output.print_error(err)
         raise typer.Exit(code=1) from err

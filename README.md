@@ -18,8 +18,16 @@ and pod events, killing a pod and watching it recover, diagnosing a broken
 environment, bumping an image through GitOps, and rolling it back through
 `git revert` — proven to survive ArgoCD's self-heal, not just claimed to.
 
+✅ **Phase 3 (the dashboard) is built.** `nexus dashboard` launches a local
+FastAPI backend + Next.js frontend — an Overview grid of every Nexus-managed
+app, an App Detail view with a chaos-trigger button and a Grafana panel, and
+a GitOps sync log. It ships as source in this repo rather than inside the
+published package for now (see [dashboard/backend](dashboard/backend) /
+[dashboard/frontend](dashboard/frontend)), so it currently only works from a
+checkout — see [Try it](#try-it).
+
 Not yet published to PyPI/Homebrew — install from source for now (see
-[Try it](#try-it) below). The dashboard (Phase 3) hasn't been built yet.
+[Try it](#try-it) below).
 
 The original manifest-based demo that inspired the CLI still lives — runnable —
 in [legacy/](legacy/README.md).
@@ -82,13 +90,29 @@ already installed and never duplicates resources. `nexus upgrade --image
 <tag>` and `nexus rollback` also exist but need a real git remote to push to
 (see [INSTALLATION.md](INSTALLATION.md) if you want to try those).
 
+### The dashboard
+
+```bash
+pip install -e ".[dashboard]"           # fastapi/uvicorn — not in the base install
+cd dashboard/frontend && npm install    # one-time
+cd ../..
+nexus dashboard                          # opens the browser, Ctrl+C to stop
+```
+
+Needs at least one app deployed (`nexus deploy` above) to show anything on
+the Overview grid. The Grafana panel on the App Detail page needs
+`kubectl port-forward svc/kube-prom-stack-grafana 3000:80 -n monitoring`
+first — Nexus doesn't expose Grafana outside the cluster automatically.
+
 ## Repository map
 
 ```
-nexus_cli/     The Python package (Typer CLI) — the full command suite
-examples/      Sample apps for demos and e2e tests (flask-demo, live-tested)
-tests/         268 unit tests (98% core coverage) + a Kind-based integration suite
-legacy/        The original hand-written GitOps demo (archived, read-only)
+nexus_cli/          The Python package (Typer CLI) — the full command suite
+dashboard/backend/  FastAPI API for the dashboard (127.0.0.1:3002)
+dashboard/frontend/ Next.js control panel (port 3001)
+examples/           Sample apps for demos and e2e tests (flask-demo, live-tested)
+tests/              355 unit tests (99% core coverage) + a Kind-based integration suite
+legacy/             The original hand-written GitOps demo (archived, read-only)
 ```
 
 ## The story

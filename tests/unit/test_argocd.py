@@ -50,6 +50,112 @@ def test_get_status_defaults_to_unknown_for_missing_fields(monkeypatch: pytest.M
     assert result.health_status == "Unknown"
 
 
+def _app_item(name: str, *, managed: bool = True, sync: str = "Synced") -> dict:
+    labels = {"managed-by": "nexus"} if managed else {"managed-by": "someone-else"}
+    return {
+        "metadata": {"name": name, "labels": labels},
+        "status": {"sync": {"status": sync}, "health": {"status": "Healthy"}},
+    }
+
+
+def test_list_managed_apps_filters_by_label_and_sorts(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {
+        "items": [
+            _app_item("zebra-app"),
+            _app_item("not-ours", managed=False),
+            _app_item("alpha-app"),
+        ]
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    apps = argocd.list_managed_apps()
+    assert [a.name for a in apps] == ["alpha-app", "zebra-app"]
+    assert apps[0].sync_status == "Synced"
+    assert apps[0].health_status == "Healthy"
+
+
+def test_list_managed_apps_skips_items_without_labels(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"items": [{"metadata": {"name": "bare-app"}}, _app_item("ours")]}
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    assert [a.name for a in argocd.list_managed_apps()] == ["ours"]
+
+
+def test_list_managed_apps_empty_when_argocd_crd_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No ArgoCD on the cluster is a legitimate 'no Nexus apps', not an error."""
+
+    def raise_no_crd(*a: object, **k: object) -> None:
+        raise NexusError(
+            what="kubectl get application failed.",
+            why='error: the server doesn\'t have a resource type "application"',
+        )
+
+    monkeypatch.setattr(argocd.kubectl, "get_json", raise_no_crd)
+    assert argocd.list_managed_apps() == []
+
+
+def test_list_managed_apps_reraises_real_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unreachable cluster must not be reported as 'no apps'."""
+
+    def raise_unreachable(*a: object, **k: object) -> None:
+        raise NexusError(
+            what="kubectl get application failed.",
+            why="Unable to connect to the server: dial tcp: i/o timeout",
+        )
+
+    monkeypatch.setattr(argocd.kubectl, "get_json", raise_unreachable)
+    with pytest.raises(NexusError, match="Unable to connect"):
+        argocd.list_managed_apps()
+
+
+def test_sync_history_sorts_most_recent_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {
+        "status": {
+            "history": [
+                {"revision": "abc123", "deployedAt": "2026-01-01T00:00:00Z"},
+                {"revision": "def456", "deployedAt": "2026-01-02T00:00:00Z"},
+            ]
+        }
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    events = argocd.sync_history("my-app")
+    assert [e.revision for e in events] == ["def456", "abc123"]
+
+
+def test_sync_history_handles_entries_missing_deployed_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sorting keys off `deployed_at or ""`, so null/absent timestamps must not
+    blow up on a str/None comparison — they sort last.
+    """
+    doc = {
+        "status": {
+            "history": [
+                {"revision": "no-timestamp"},
+                {"revision": "newer", "deployedAt": "2026-01-02T00:00:00Z"},
+                {"revision": "null-timestamp", "deployedAt": None},
+                {"revision": "older", "deployedAt": "2026-01-01T00:00:00Z"},
+            ]
+        }
+    }
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: doc)
+    events = argocd.sync_history("my-app")
+    assert [e.revision for e in events[:2]] == ["newer", "older"]
+    assert {e.revision for e in events[2:]} == {"no-timestamp", "null-timestamp"}
+    assert all(e.deployed_at is None for e in events[2:])
+
+
+def test_sync_history_empty_when_no_history_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd.kubectl, "get_json", lambda *a, **k: {"status": {}})
+    assert argocd.sync_history("my-app") == []
+
+
+def test_sync_history_empty_when_app_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what="not found")
+
+    monkeypatch.setattr(argocd.kubectl, "get_json", raise_not_found)
+    assert argocd.sync_history("missing-app") == []
+
+
 def test_trigger_sync_patches_refresh_annotation(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, list[str]] = {}
     monkeypatch.setattr(argocd.kubectl, "run", lambda args, **k: captured.setdefault("args", args))
