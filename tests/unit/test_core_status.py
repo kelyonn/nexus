@@ -14,10 +14,17 @@ from nexus_cli.core import status
 
 
 def _pod(
-    name: str, *, phase: str = "Running", container_statuses: list[dict] | None = None
+    name: str,
+    *,
+    phase: str = "Running",
+    container_statuses: list[dict] | None = None,
+    created_at: str | None = None,
 ) -> dict:
+    metadata = {"name": name}
+    if created_at is not None:
+        metadata["creationTimestamp"] = created_at
     return {
-        "metadata": {"name": name},
+        "metadata": metadata,
         "status": {
             "phase": phase,
             "containerStatuses": container_statuses or [],
@@ -98,6 +105,18 @@ def test_list_pods_defaults_phase_to_unknown(monkeypatch: pytest.MonkeyPatch) ->
     doc = {"items": [{"metadata": {"name": "my-app-abc"}, "status": {}}]}
     monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
     assert status.list_pods("my-app")[0].phase == "Unknown"
+
+
+def test_list_pods_includes_creation_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"items": [_pod("my-app-abc", created_at="2026-01-01T00:00:00Z")]}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.list_pods("my-app")[0].created_at == "2026-01-01T00:00:00Z"
+
+
+def test_list_pods_created_at_none_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"items": [_pod("my-app-abc")]}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.list_pods("my-app")[0].created_at is None
 
 
 def test_replica_counts_reads_spec_and_status(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -21,6 +21,7 @@ export interface PodSummary {
   phase: string;
   restarts: number;
   problem: string | null;
+  created_at: string | null;
 }
 
 export interface SyncEvent {

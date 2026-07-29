@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, PodSummary, listPods, triggerChaos } from "@/lib/api";
+import { formatAge } from "@/lib/age";
 
 const NORMAL_POLL_MS = 3000;
 const RECOVERY_POLL_MS = 1000;
@@ -149,6 +150,7 @@ export default function AppDetailPage() {
               <div key={pod.name} className="pod-row">
                 <span>{pod.name}</span>
                 <span className="muted">{pod.phase}</span>
+                <span className="muted">age={formatAge(pod.created_at)}</span>
                 <span className="muted">restarts={pod.restarts}</span>
                 {pod.problem && <span className="badge badge-danger">{pod.problem}</span>}
               </div>
