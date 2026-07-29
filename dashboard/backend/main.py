@@ -14,12 +14,17 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from dashboard.backend.routes import router
 
-FRONTEND_ORIGIN = "http://localhost:3001"
+# Both spellings of loopback: the dev server binds 127.0.0.1 but the browser is
+# opened at localhost, and those are *different* origins to a browser. Requests
+# normally reach this process via Next's same-origin /api/* rewrite so CORS
+# never applies — but if that rewrite is bypassed or changed, allowing only one
+# spelling would fail in a way that's tedious to diagnose.
+FRONTEND_ORIGINS = ["http://localhost:3001", "http://127.0.0.1:3001"]
 
 app = FastAPI(title="Nexus Dashboard API")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[FRONTEND_ORIGIN],
+    allow_origins=FRONTEND_ORIGINS,
     allow_methods=["GET", "POST"],
     allow_headers=["Authorization", "Content-Type"],
 )

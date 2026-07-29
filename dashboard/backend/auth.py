@@ -20,7 +20,12 @@ import secrets
 
 from fastapi import Header, HTTPException
 
-TOKEN_ENV_VAR = "NEXUS_DASHBOARD_TOKEN"
+# Imported, not redefined: `nexus dashboard` sets this variable and this module
+# reads it, so a copy that drifted would break chaos triggers with a 503 and no
+# obvious cause.
+from nexus_cli.core.dashboard import TOKEN_ENV_VAR
+
+__all__ = ["TOKEN_ENV_VAR", "require_token"]
 
 
 def require_token(authorization: str | None = Header(default=None)) -> None:
