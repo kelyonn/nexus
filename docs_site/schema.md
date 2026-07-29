@@ -19,6 +19,7 @@ so a typo fails loudly instead of being silently ignored.
 | `imagePullPolicy` | `Always` \| `IfNotPresent` \| `Never` | `Always` | — |
 | `metricsPath` | string \| `null` | `null` | Must start with `/` if set |
 | `metricsPort` | integer \| `null` | `null` | 1–65535 if set |
+| `registry` | object \| `null` | `null` | See below |
 | `env` | list of `{name, value}` | `[]` | — |
 | `resources` | see below | `100m`/`128Mi` requests, `500m`/`512Mi` limits | — |
 
@@ -51,6 +52,40 @@ uses [`prometheus-flask-exporter`](https://github.com/rycus86/prometheus_flask_e
 whose real metric names are `flask_http_request_total` and
 `flask_http_request_duration_seconds_bucket` (not the generic
 `http_requests_total` some other libraries use).
+
+### `registry`
+
+Opt-in — closes the most common cause of `ImagePullBackOff`: a private
+registry (ECR, GCR, a private GHCR/Docker Hub repo) that needs credentials
+Kubernetes doesn't have. Unset means "this image is pullable without
+credentials," the honest default for a public image or Minikube's local
+cache.
+
+```yaml
+app:
+  registry:
+    server: ghcr.io                      # or your ECR/GCR registry host
+    usernameEnv: REGISTRY_USERNAME       # name of an env var, not a value
+    passwordEnv: REGISTRY_PASSWORD       # name of an env var, not a value
+```
+
+**`usernameEnv`/`passwordEnv` are environment variable *names*, never raw
+credentials.** `nexus.yaml` gets committed to git — a real credential living
+in it would recreate the exact "secret committed to git" problem GitOps
+exists to avoid. `nexus deploy` reads the actual username/password from
+those environment variables in your shell at deploy time, and:
+
+1. Creates (or updates, idempotently) a `kubernetes.io/dockerconfigjson`
+   Secret named `<app.name>-registry`, applied directly via `kubectl` —
+   never rendered into the `k8s/` directory that gets committed.
+2. Templates `imagePullSecrets: [{name: <app.name>-registry}]` onto the
+   Deployment automatically.
+
+Missing either environment variable fails `nexus deploy` immediately with a
+clear error (and `nexus doctor` catches it proactively, before you even try
+to deploy) — a silently-empty credential would instead produce a Secret
+that *looks* configured but can't actually authenticate, discovered only
+later as a confusing `ImagePullBackOff`.
 
 ### `resources`
 

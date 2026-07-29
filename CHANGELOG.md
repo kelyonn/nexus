@@ -125,6 +125,25 @@ All notable changes to Nexus are documented here. Format based on
   (`has_http_metrics`, `created_at`, and `subject` each needed adding by
   hand to both sides). CI regenerates and fails if the committed output is
   stale (`.github/workflows/ci.yml`'s `dashboard-frontend` job).
+- `app.registry` in `nexus.yaml`: closes the most common `ImagePullBackOff`
+  cause — a private registry (ECR, GCR, a private GHCR/Docker Hub repo)
+  Kubernetes has no credentials for. Takes environment variable *names*
+  (`usernameEnv`/`passwordEnv`), never raw credentials — `nexus.yaml` gets
+  committed to git, so a real credential there would recreate the exact
+  problem GitOps exists to avoid. `nexus deploy` reads the actual
+  credentials from those env vars at deploy time and imperatively
+  creates/updates a `kubernetes.io/dockerconfigjson` Secret via `kubectl`
+  (never rendered into the committed `k8s/` directory), written through a
+  short-lived 0600 temp file rather than a `--docker-password=...` CLI
+  argument (avoids leaking it via `ps aux` for the life of the process).
+  `deployment.yaml.j2` references it via `imagePullSecrets` when set.
+  `nexus doctor` checks credential env vars are present (never prints their
+  values). Live-verified against the real cluster: missing credentials
+  abort `nexus deploy` clearly (and are caught proactively by `nexus
+  doctor`), the created Secret's decoded content is exactly correct,
+  the Deployment correctly references it, rotating credentials and
+  redeploying updates the Secret in place (idempotent, no duplication), and
+  `nexus destroy` cleans it up (implicitly, via namespace deletion).
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git

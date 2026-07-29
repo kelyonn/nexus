@@ -20,6 +20,23 @@ this directly (`core/status.py`'s `image_pull_fix()` is context-aware: it
 checks whether you're on a Minikube context and what `imagePullPolicy` is
 currently set to before suggesting a fix).
 
+## `ImagePullBackOff` / `401 Unauthorized` pulling a private image
+
+**Symptom:** `kubectl describe pod` shows something like `pull access
+denied` or `401 Unauthorized`, not a plain "not found" — the image exists,
+but Kubernetes has no credentials for the registry it's in.
+
+**Cause:** by default Nexus assumes your image is pullable without
+credentials (a public image, or Minikube's local cache). A private registry
+(ECR, GCR, a private GHCR/Docker Hub repo) needs an `imagePullSecrets`
+entry Nexus doesn't create unless you ask it to.
+
+**Fix:** set `app.registry` in `nexus.yaml` — see the
+[schema reference](schema.md#registry). Note it takes environment variable
+*names*, not the credentials themselves; set those variables in your shell
+before running `nexus deploy`. `nexus doctor` catches a missing credential
+env var before you even get to `nexus deploy`.
+
 ## ArgoCD reports `health: Progressing` forever on a fully healthy app
 
 **Symptom:** `nexus deploy`/`upgrade`/`rollback` wait the full sync timeout

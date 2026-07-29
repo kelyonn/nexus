@@ -273,3 +273,50 @@ def test_unknown_field_rejected(tmp_path: Path) -> None:
     p = _write(tmp_path, app, VALID_PLATFORM)
     with pytest.raises(NexusError):
         config.load(p)
+
+
+# --- app.registry (imagePullSecrets automation) ---
+
+VALID_REGISTRY = {
+    "server": "ghcr.io",
+    "usernameEnv": "REGISTRY_USERNAME",
+    "passwordEnv": "REGISTRY_PASSWORD",
+}
+
+
+def test_registry_unset_by_default(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry is None
+
+
+def test_registry_valid_config_loads(tmp_path: Path) -> None:
+    app = {**VALID_APP, "registry": VALID_REGISTRY}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry is not None
+    assert cfg.app.registry.server == "ghcr.io"
+    assert cfg.app.registry.usernameEnv == "REGISTRY_USERNAME"
+    assert cfg.app.registry.passwordEnv == "REGISTRY_PASSWORD"
+
+
+@pytest.mark.parametrize("field", ["server", "usernameEnv", "passwordEnv"])
+def test_registry_empty_field_rejected(tmp_path: Path, field: str) -> None:
+    app = {**VALID_APP, "registry": {**VALID_REGISTRY, field: ""}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert field in exc_info.value.why
+
+
+def test_registry_unknown_field_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "registry": {**VALID_REGISTRY, "password": "shouldnt-exist"}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_registry_secret_name_derived_from_app_name(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry_secret_name == f"{cfg.app.name}-registry"

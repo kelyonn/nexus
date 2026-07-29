@@ -382,6 +382,28 @@ def test_image_pull_policy_propagates_to_deployment(
     assert container["imagePullPolicy"] == "IfNotPresent"
 
 
+def test_registry_unset_omits_image_pull_secrets(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    assert "imagePullSecrets" not in doc["spec"]["template"]["spec"]
+
+
+def test_registry_set_adds_image_pull_secrets_referencing_derived_name(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.registry = config.RegistryConfig(
+        server="ghcr.io", usernameEnv="REG_USER", passwordEnv="REG_PASS"
+    )
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    assert doc["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": flask_demo_config.app.registry_secret_name}
+    ]
+    assert flask_demo_config.app.registry_secret_name == "nexus-app-registry"
+
+
 def test_different_app_name_is_consistent_across_all_templates(
     flask_demo_config: config.NexusConfig,
 ) -> None:

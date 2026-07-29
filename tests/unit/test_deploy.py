@@ -160,6 +160,91 @@ def test_deploy_skips_already_installed_deps(
     assert "pushed to origin/main" in result.output
 
 
+VALID_YAML_WITH_REGISTRY = """
+app:
+  name: my-app
+  image: ghcr.io/me/my-app:latest
+  port: 8080
+  healthPath: /health
+  registry:
+    server: ghcr.io
+    usernameEnv: REGISTRY_USERNAME
+    passwordEnv: REGISTRY_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def test_deploy_without_registry_has_no_pull_secret_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    result = runner.invoke(app, ["deploy"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "imagePullSecret" not in result.output
+
+
+def test_deploy_with_registry_creates_pull_secret_after_apply_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        deploy_module, "apply_app_manifests", lambda cfg: calls.append("apply_manifests")
+    )
+    monkeypatch.setattr(
+        deploy_module, "apply_registry_secret", lambda cfg: calls.append("apply_registry_secret")
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Create imagePullSecret → my-app-registry" in result.output
+    assert calls == ["apply_manifests", "apply_registry_secret"]
+
+
+def test_deploy_registry_secret_failure_stops_deploy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    def failing_registry_step(cfg: object) -> None:
+        raise NexusError(what="Registry credential env var(s) not set: REGISTRY_USERNAME.")
+
+    monkeypatch.setattr(deploy_module, "apply_registry_secret", failing_registry_step)
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code != 0
+    assert "aborted at this step" in result.output
+    assert "REGISTRY_USERNAME" in result.output
+
+
+def test_apply_registry_secret_delegates_to_registry_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = NexusConfig(
+        app=AppConfig(
+            name="my-app",
+            image="ghcr.io/me/my-app:v1",
+            port=8080,
+            healthPath="/health",
+        ),
+        platform=PlatformConfig(repoURL="https://github.com/user/repo.git", branch="main"),
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(deploy_module.registry, "apply_pull_secret", lambda app: calls.append(app))
+    deploy_module.apply_registry_secret(cfg)
+    assert calls == [cfg.app]
+
+
 def test_deploy_yes_flag_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_config(tmp_path)
