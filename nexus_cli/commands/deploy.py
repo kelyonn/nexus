@@ -235,7 +235,7 @@ def _run_step(
     docstring for why) only warn and let deploy continue. A step may return a
     short outcome string, appended to its "done" line.
     """
-    output.step(f"[{index}/{total}] {label}...")
+    output.info(f"[{index}/{total}] {label}...")
     start = time.monotonic()
     try:
         result = fn()
@@ -271,20 +271,17 @@ def deploy(
 
     name = cfg.app.name
 
-    output.step("")
-    output.step(f"Nexus Deploy — {name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Deploy — {name}")
 
     for c in preflight.run(require_helm=True):
-        glyph = "✓" if c.passed else "✗"
-        output.step(f"{glyph} {c.detail}")
+        output.check(c.passed, c.detail)
 
     deps = dependency_status(cfg)
     for label, _namespace, installed in deps:
         if installed:
-            output.step(f"✓ {label} present → skip")
+            output.check(True, f"{label} present → skip")
         else:
-            output.step(f"✗ {label} not installed → will install")
+            output.check(False, f"{label} not installed → will install")
 
     # (label, fn, is_critical) — the git-sync step is the one non-critical entry.
     plan: list[tuple[str, Callable[[], object], bool]] = []
@@ -334,7 +331,7 @@ def deploy(
         _run_step(i, total, short_label, fn, critical=critical)
 
     output.step("")
-    output.step("Waiting for sync...")
+    output.info("Waiting for sync...")
     try:
         result = argocd.wait_for_healthy(name, timeout=SYNC_WAIT_TIMEOUT)
     except output.NexusError as err:
