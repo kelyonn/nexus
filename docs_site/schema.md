@@ -20,8 +20,11 @@ so a typo fails loudly instead of being silently ignored.
 | `metricsPath` | string \| `null` | `null` | Must start with `/` if set |
 | `metricsPort` | integer \| `null` | `null` | 1–65535 if set |
 | `registry` | object \| `null` | `null` | See below |
-| `env` | list of `{name, value}` | `[]` | — |
+| `secrets` | list of `{name, valueEnv}` | `[]` | See below |
+| `env` | list of `{name, value, plaintext}` | `[]` | `value` is rejected if it looks like a credential — see below |
 | `resources` | see below | `100m`/`128Mi` requests, `500m`/`512Mi` limits | — |
+| `security` | see below | Kubernetes' own permissive defaults | — |
+| `serviceType` | `ClusterIP` \| `NodePort` \| `LoadBalancer` | `ClusterIP` | — |
 
 ### `imagePullPolicy`
 
@@ -87,6 +90,58 @@ to deploy) — a silently-empty credential would instead produce a Secret
 that *looks* configured but can't actually authenticate, discovered only
 later as a confusing `ImagePullBackOff`.
 
+### `secrets`
+
+Opt-in — real app secrets (a DB password, an API key), as opposed to `env`
+below, which is free text and rejects anything that looks credential-shaped.
+
+```yaml
+app:
+  secrets:
+    - name: DB_PASSWORD          # env var name inside the container
+      valueEnv: APP_DB_PASSWORD  # name of an env var in your shell, not a value
+```
+
+**`valueEnv` is an environment variable *name*, never the secret itself** —
+same reasoning as `registry.usernameEnv`/`passwordEnv` above. `nexus deploy`
+reads the actual value from that environment variable in your shell at
+deploy time, and:
+
+1. Creates (or updates, idempotently) a Secret named `<app.name>-secrets`,
+   applied directly via `kubectl` — never rendered into the `k8s/` directory
+   that gets committed.
+2. References it on the Deployment via `valueFrom.secretKeyRef` (so the
+   value itself never appears in any generated manifest, only a reference to
+   a key in a Secret).
+
+Missing the environment variable fails `nexus deploy` immediately with a
+clear error naming which one (and `nexus doctor` catches it proactively).
+
+This closes the plaintext-secrets-in-git gap for the common case — see
+[FUTURE-SCOPE.md](https://github.com/kelyonn/nexus/blob/main/FUTURE-SCOPE.md)
+for what a more thorough answer (Sealed Secrets/SOPS, for secrets encrypted
+at rest in git rather than applied out-of-band) would involve.
+
+### `env`'s credential guardrail
+
+`app.env` values are otherwise free text, but `nexus.yaml` (and the `k8s/`
+manifests `nexus deploy` commits) get pushed to your git remote — so an
+`env` entry whose name looks credential-shaped (contains `PASS`, `SECRET`,
+`TOKEN`, `API_KEY`, `PRIVATE_KEY`, `CREDENTIAL`, `DSN`, `DATABASE_URL`, or
+`CONNECTION_STRING`) or whose value looks like a URL with embedded
+credentials or a PEM-encoded key is rejected at `nexus.yaml` load time. Move
+it to `app.secrets` instead. If it's a genuine false positive (an env var
+that happens to match but isn't a credential — `MAX_TOKENS`, say), set
+`plaintext: true` on that entry:
+
+```yaml
+app:
+  env:
+    - name: MAX_TOKENS
+      value: "4096"
+      plaintext: true
+```
+
 ### `resources`
 
 ```yaml
@@ -100,12 +155,60 @@ app:
       memory: "512Mi"
 ```
 
+### `security`
+
+```yaml
+app:
+  security:
+    runAsNonRoot: false          # nexus init sets this to true for new apps
+    runAsUser: null              # a specific UID, or leave to the image's own USER
+    readOnlyRootFilesystem: false
+```
+
+Some container hardening is unconditional and always rendered on the
+Deployment regardless of this section — `allowPrivilegeEscalation: false`,
+dropping all Linux capabilities, a dedicated per-app `ServiceAccount` with
+`automountServiceAccountToken: false`, and a `seccompProfile: RuntimeDefault`
+— because no ordinary container needs any of that, so there's no tradeoff to
+make configurable.
+
+`runAsNonRoot`/`runAsUser`/`readOnlyRootFilesystem` are different: whether
+they're safe to turn on depends entirely on the image. The schema default is
+Kubernetes' own permissive default (all off), not a hardened one, because
+Nexus can't know whether an arbitrary image declares a non-root `USER` or
+expects to write to its own filesystem — flipping `runAsNonRoot: true` on an
+image that doesn't support it fails the container outright
+(`CreateContainerConfigError`) rather than degrading gracefully.
+`nexus init` sets `runAsNonRoot: true` on every newly generated `nexus.yaml`,
+so new apps opt in by default and the decision is visible, in writing, in
+your own config either way.
+
+Replicas >= 2 also get a `PodDisruptionBudget` (`maxUnavailable: 1`)
+automatically — omitted at `replicas: 1`, where it would block every
+voluntary disruption (a node drain, a cluster upgrade) forever instead of
+protecting anything.
+
+### `serviceType`
+
+```yaml
+app:
+  serviceType: ClusterIP # or NodePort / LoadBalancer
+```
+
+Defaults to `ClusterIP`, reachable via the `kubectl port-forward` command
+`nexus deploy` prints on success — that works identically everywhere, so
+it's the default rather than `LoadBalancer` (which sits `<pending>` forever
+on a bare Kind/Minikube cluster, and provisions a real, billed load balancer
+per app on a real cloud one). See
+[Exposing your app](exposing-your-app.md) for the full set of options,
+including bringing your own Ingress.
+
 ## `platform`
 
 | Field | Type | Default | Validation |
 |---|---|---|---|
 | `repoURL` | string | — (required) | Valid HTTPS or SSH git URL |
-| `branch` | string | — (required) | — |
+| `branch` | string | — (required) | Valid git branch name (letters, digits, `.`, `-`, `_`, `/`; no `..`, no leading `-`, no leading/trailing `/`) |
 | `monitoring` | boolean | `true` | — |
 | `chaos` | boolean | `false` | — |
 | `chaosSchedule` | string | `*/30 * * * *` | Valid 5-field cron expression |

@@ -59,7 +59,7 @@ from pathlib import Path
 
 import typer
 
-from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, registry, render
+from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, registry, render, secrets
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core.config import NexusConfig
 
@@ -146,11 +146,26 @@ def dependency_status(cfg: NexusConfig) -> list[tuple[str, str, bool]]:
     return deps
 
 
+def apply_namespace(cfg: NexusConfig) -> None:
+    """Apply just the app's Namespace, ahead of everything else that's
+    namespaced to it — the Secret(s) below, then the Deployment/Service.
+
+    Split out from ``apply_app_manifests`` (which used to apply the
+    namespace as part of the same loop, ordered first only because
+    ``render.template_names()`` happens to list it first) so that ordering
+    is explicit and doesn't depend on dict iteration order matching what the
+    Secret steps need.
+    """
+    kubectl.apply_manifest(render.render_template("namespace", cfg))
+
+
 def apply_app_manifests(cfg: NexusConfig) -> None:
-    """Apply every rendered template except the ArgoCD Application itself."""
+    """Apply every rendered template except the Namespace (applied earlier,
+    on its own — see ``apply_namespace``) and the ArgoCD Application itself.
+    """
     rendered = render.render_manifests(cfg)
     for name, text in rendered.items():
-        if name == "argocd-app":
+        if name in ("namespace", "argocd-app"):
             continue
         kubectl.apply_manifest(text)
 
@@ -158,11 +173,26 @@ def apply_app_manifests(cfg: NexusConfig) -> None:
 def apply_registry_secret(cfg: NexusConfig) -> None:
     """Create/update the app's imagePullSecret, if ``app.registry`` is set.
 
-    Must run *after* ``apply_app_manifests`` — the Secret is namespaced to
-    the app's own namespace, which that step is what creates. A no-op when
-    ``app.registry`` is unset (most apps).
+    Must run *after* ``apply_namespace`` (the Secret is namespaced to the
+    app) and *before* ``apply_app_manifests`` — the Deployment references
+    this Secret via ``imagePullSecrets``, so creating it first avoids a
+    first-deploy ImagePullBackOff race where the Deployment briefly
+    references a Secret that doesn't exist yet. (Previously this ran after
+    ``apply_app_manifests``, which had exactly that race — fixed alongside
+    adding the equivalent ordering for ``apply_app_secret`` below, since both
+    needed the same fix.) A no-op when ``app.registry`` is unset (most apps).
     """
     registry.apply_pull_secret(cfg.app)
+
+
+def apply_app_secret(cfg: NexusConfig) -> None:
+    """Create/update the app's Secret from ``app.secrets``, if set.
+
+    Same ordering requirement as ``apply_registry_secret`` and the same
+    reason: the Deployment references this Secret via ``secretKeyRef``. A
+    no-op when ``app.secrets`` is unset (most apps).
+    """
+    secrets.apply_app_secret(cfg.app)
 
 
 def sync_manifests_to_git(cfg: NexusConfig) -> str:
@@ -287,13 +317,14 @@ def deploy(
             output.check(False, f"{label} not installed → will install")
 
     # (label, fn, is_critical) — the git-sync step is the one non-critical entry.
+    # Namespace, then any Secrets, then the rest of the manifests: both
+    # Secret steps are referenced by the Deployment applied in
+    # apply_app_manifests, so they must exist before it runs.
     plan: list[tuple[str, Callable[[], object], bool]] = []
     for label, namespace, installed in deps:
         if not installed:
             plan.append((f"Install {label} → namespace: {namespace}", _INSTALL_FNS[label], True))
-    plan.append(
-        (f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg), True)
-    )
+    plan.append((f"Apply namespace → {name}", lambda: apply_namespace(cfg), True))
     if cfg.app.registry is not None:
         plan.append(
             (
@@ -302,6 +333,17 @@ def deploy(
                 True,
             )
         )
+    if cfg.app.secrets:
+        plan.append(
+            (
+                f"Create Secret → {cfg.app.secret_name}",
+                lambda: apply_app_secret(cfg),
+                True,
+            )
+        )
+    plan.append(
+        (f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg), True)
+    )
     plan.append(
         (
             f"Commit manifests to Git → {MANIFESTS_DIR}/",

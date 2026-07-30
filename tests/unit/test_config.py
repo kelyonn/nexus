@@ -320,3 +320,333 @@ def test_registry_secret_name_derived_from_app_name(tmp_path: Path) -> None:
     p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
     cfg = config.load(p)
     assert cfg.app.registry_secret_name == f"{cfg.app.name}-registry"
+
+
+# --- injection-hardening validators (see docs/INTERVIEW-BRIEF.md) ---
+#
+# EnvVar.name, PlatformConfig.branch, and the healthPath/metricsPath charset
+# were unvalidated (or under-validated) before this fix, and every one of
+# them lands unquoted in a generated manifest. These payloads are the exact
+# ones verified (by rendering the templates in-process) to restructure the
+# generated Deployment or ArgoCD Application before the fix landed. This
+# suite proves they're now rejected at the single config.load() choke point,
+# before they ever reach a template.
+
+_HOSTILE_BRANCH = (
+    "main\n    path: ../../etc\n  syncPolicy:\n    automated:\n      prune: false\n  # "
+)
+_HOSTILE_ENV_NAME = (
+    'X\n          value: "y"\n        securityContext:\n          privileged: true\n      # '
+)
+
+
+def test_invalid_env_name_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "env": [{"name": _HOSTILE_ENV_NAME, "value": "v"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "env" in exc_info.value.why
+
+
+@pytest.mark.parametrize("name", ["OK", "_OK", "OK.NAME", "OK-NAME", "OK_1"])
+def test_valid_env_names_accepted(tmp_path: Path, name: str) -> None:
+    app = {**VALID_APP, "env": [{"name": name, "value": "v"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].name == name
+
+
+def test_env_value_stays_free_text(tmp_path: Path) -> None:
+    """EnvVar.value is deliberately NOT validated — users need to put
+    arbitrary strings there. Safety for this field comes from `| tojson`
+    escaping at the template layer (test_render.py), not from rejecting it
+    here.
+    """
+    hostile_value = 'x"\n        securityContext:\n          privileged: true'
+    app = {**VALID_APP, "env": [{"name": "OK", "value": hostile_value}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].value == hostile_value
+
+
+def test_invalid_branch_injection_payload_rejected(tmp_path: Path) -> None:
+    platform = {**VALID_PLATFORM, "branch": _HOSTILE_BRANCH}
+    p = _write(tmp_path, VALID_APP, platform)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "branch" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "main",
+        "cli-platform",
+        "feature/foo",
+        "release-1.0",
+        "-leading-hyphen",  # rejected: leading '-'
+        "trailing/",  # rejected: trailing '/'
+        "has..dotdot",  # rejected: '..'
+        "ends.lock",  # rejected: trailing '.lock'
+        "has space",  # rejected: not in the allowed charset
+        'has"quote',  # rejected: not in the allowed charset
+    ],
+)
+def test_branch_validation(tmp_path: Path, branch: str) -> None:
+    platform = {**VALID_PLATFORM, "branch": branch}
+    p = _write(tmp_path, VALID_APP, platform)
+    if branch in ("main", "cli-platform", "feature/foo", "release-1.0"):
+        cfg = config.load(p)
+        assert cfg.platform.branch == branch
+    else:
+        with pytest.raises(NexusError) as exc_info:
+            config.load(p)
+        assert "branch" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "path",
+    ['/health"path', "/health path", "/health\npath"],
+)
+def test_invalid_health_path_hostile_chars_rejected(tmp_path: Path, path: str) -> None:
+    app = {**VALID_APP, "healthPath": path}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "healthPath" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "path",
+    ['/metrics"path', "/metrics path", "/metrics\npath"],
+)
+def test_invalid_metrics_path_hostile_chars_rejected(tmp_path: Path, path: str) -> None:
+    app = {**VALID_APP, "metricsPath": path}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "metricsPath" in exc_info.value.why
+
+
+# --- app.secrets (real app secrets, as opposed to app.env's free text) ---
+
+
+def test_secrets_unset_by_default(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.secrets == []
+
+
+def test_secrets_valid_config_loads(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "secrets": [{"name": "DB_PASSWORD", "valueEnv": "APP_DB_PASSWORD"}],
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.secrets[0].name == "DB_PASSWORD"
+    assert cfg.app.secrets[0].valueEnv == "APP_DB_PASSWORD"
+
+
+def test_secrets_invalid_name_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "secrets": [{"name": "not a name!", "valueEnv": "X"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "secrets" in exc_info.value.why
+
+
+def test_secrets_empty_value_env_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "secrets": [{"name": "DB_PASSWORD", "valueEnv": ""}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "valueEnv" in exc_info.value.why
+
+
+def test_secrets_unknown_field_rejected(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "secrets": [{"name": "DB_PASSWORD", "valueEnv": "X", "value": "shouldnt-exist"}],
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_secret_name_derived_from_app_name(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.secret_name == f"{cfg.app.name}-secrets"
+
+
+# --- app.env plaintext-credential guardrail (see docs/INTERVIEW-BRIEF.md) ---
+#
+# EnvVar.value is deliberately kept free-text at the schema-validator level
+# (test_env_value_stays_free_text) — this is a *separate*, narrower check
+# that runs after schema validation, in config.load() itself, specifically
+# to reject the common case of a real credential ending up in app.env
+# instead of app.secrets. It never echoes the rejected value (verified by
+# test_credential_value_not_echoed_in_error below) — that's why it's not a
+# Pydantic validator (see _validate_no_plaintext_secrets's docstring).
+
+
+@pytest.mark.parametrize(
+    "name", ["DB_PASSWORD", "API_KEY", "APIKEY", "AUTH_TOKEN", "PRIVATE_KEY", "CREDENTIAL_ID"]
+)
+def test_credential_shaped_env_name_rejected(tmp_path: Path, name: str) -> None:
+    app = {**VALID_APP, "env": [{"name": name, "value": "whatever"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "credential" in exc_info.value.what
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "postgres://user:hunter2@db.internal:5432/app",
+        "https://alice:s3cret@api.example.com/v1",
+        "-----BEGIN PRIVATE KEY-----\nMIIBogIBAAJ...",
+    ],
+)
+def test_credential_shaped_env_value_rejected(tmp_path: Path, value: str) -> None:
+    app = {**VALID_APP, "env": [{"name": "CONFIG", "value": value}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "credential" in exc_info.value.what
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("VERSION", "v1"),
+        ("BG_COLOR", "blue"),
+        ("NODE_ENV", "production"),
+    ],
+)
+def test_ordinary_env_vars_accepted(tmp_path: Path, name: str, value: str) -> None:
+    app = {**VALID_APP, "env": [{"name": name, "value": value}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].value == value
+
+
+def test_max_tokens_is_a_known_deliberate_false_positive(tmp_path: Path) -> None:
+    """MAX_TOKENS isn't a credential, but the deny-list matches on `TOKEN`
+    as a substring and flags it anyway — a known, accepted trade-off (the
+    deny-list is deliberately biased toward false positives; see its
+    comment in config.py). Named here so the trade-off is documented as a
+    test, not just a comment, and pinned against `plaintext: true` fixing it.
+    """
+    app = {**VALID_APP, "env": [{"name": "MAX_TOKENS", "value": "4096"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "credential" in exc_info.value.what
+
+
+def test_plaintext_true_bypasses_the_credential_check(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "env": [{"name": "MAX_TOKENS", "value": "4096", "plaintext": True}],
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].value == "4096"
+
+
+def test_credential_value_not_echoed_in_error(tmp_path: Path) -> None:
+    """The whole point of _validate_no_plaintext_secrets living outside
+    Pydantic's validator machinery: verified empirically (see
+    docs/INTERVIEW-BRIEF.md) that a Pydantic model_validator's error `input`
+    echoes the rejected value verbatim — exactly the wrong behavior for a
+    check whose job is keeping a credential out of any output at all.
+    """
+    secret_value = "sk-super-secret-do-not-print-me"
+    app = {**VALID_APP, "env": [{"name": "API_KEY", "value": secret_value}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert secret_value not in str(exc_info.value)
+    assert secret_value not in (exc_info.value.why or "")
+    assert secret_value not in (exc_info.value.fix or "")
+
+
+# --- app.security (pod/container hardening that depends on the image —
+# see SecurityConfig's docstring for why these default off, unlike the
+# unconditional hardening in deployment.yaml.j2 itself) ---
+
+
+def test_security_unset_defaults_to_kubernetes_permissive_defaults(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.security.runAsNonRoot is False
+    assert cfg.app.security.runAsUser is None
+    assert cfg.app.security.readOnlyRootFilesystem is False
+
+
+def test_security_valid_config_loads(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "security": {"runAsNonRoot": True, "runAsUser": 10001, "readOnlyRootFilesystem": True},
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.security.runAsNonRoot is True
+    assert cfg.app.security.runAsUser == 10001
+    assert cfg.app.security.readOnlyRootFilesystem is True
+
+
+def test_security_negative_run_as_user_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "security": {"runAsUser": -1}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_security_unknown_field_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "security": {"runAsNonRoot": True, "privileged": True}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+# --- app.serviceType ---
+
+
+def test_service_type_defaults_to_cluster_ip(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.serviceType == "ClusterIP"
+
+
+@pytest.mark.parametrize("value", ["ClusterIP", "NodePort", "LoadBalancer"])
+def test_service_type_accepts_valid_values(tmp_path: Path, value: str) -> None:
+    app = {**VALID_APP, "serviceType": value}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.serviceType == value
+
+
+def test_service_type_rejects_invalid_value(tmp_path: Path) -> None:
+    app = {**VALID_APP, "serviceType": "ExternalName"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_multiple_credential_shaped_env_vars_all_reported(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "env": [
+            {"name": "DB_PASSWORD", "value": "x"},
+            {"name": "API_KEY", "value": "y"},
+        ],
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "DB_PASSWORD" in exc_info.value.what
+    assert "API_KEY" in exc_info.value.what
