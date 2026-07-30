@@ -249,10 +249,12 @@ def _run_step(
             raise typer.Exit(code=1) from err
         output.warn(f"    skipped ({elapsed:.0f}s) — ArgoCD sync stays pending until this is fixed")
         output.print_error(err)
+        output.step("")
         return
     elapsed = time.monotonic() - start
     suffix = f" — {result}" if isinstance(result, str) else ""
     output.success(f"    done ({elapsed:.0f}s){suffix}")
+    output.step("")
 
 
 def deploy(
@@ -276,6 +278,7 @@ def deploy(
     for c in preflight.run(require_helm=True):
         output.check(c.passed, c.detail)
 
+    output.step("")
     deps = dependency_status(cfg)
     for label, _namespace, installed in deps:
         if installed:
@@ -330,7 +333,6 @@ def deploy(
         short_label = label.split(" →")[0]
         _run_step(i, total, short_label, fn, critical=critical)
 
-    output.step("")
     output.info("Waiting for sync...")
     try:
         result = argocd.wait_for_healthy(name, timeout=SYNC_WAIT_TIMEOUT)
