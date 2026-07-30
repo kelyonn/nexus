@@ -12,6 +12,10 @@ docs_dir: docs_site
 
 theme:
   name: material
+  # overrides/ holds home.html — the terminal-styled splash template that
+  # docs_site/index.md opts into via its `template:` front matter. Every other
+  # page uses Material's stock templates.
+  custom_dir: overrides
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
