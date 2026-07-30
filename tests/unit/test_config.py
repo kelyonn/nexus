@@ -320,3 +320,109 @@ def test_registry_secret_name_derived_from_app_name(tmp_path: Path) -> None:
     p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
     cfg = config.load(p)
     assert cfg.app.registry_secret_name == f"{cfg.app.name}-registry"
+
+
+# --- injection-hardening validators (see docs/INTERVIEW-BRIEF.md) ---
+#
+# EnvVar.name, PlatformConfig.branch, and the healthPath/metricsPath charset
+# were unvalidated (or under-validated) before this fix, and every one of
+# them lands unquoted in a generated manifest. These payloads are the exact
+# ones verified (by rendering the templates in-process) to restructure the
+# generated Deployment or ArgoCD Application before the fix landed. This
+# suite proves they're now rejected at the single config.load() choke point,
+# before they ever reach a template.
+
+_HOSTILE_BRANCH = (
+    "main\n    path: ../../etc\n  syncPolicy:\n    automated:\n      prune: false\n  # "
+)
+_HOSTILE_ENV_NAME = (
+    'X\n          value: "y"\n        securityContext:\n          privileged: true\n      # '
+)
+
+
+def test_invalid_env_name_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "env": [{"name": _HOSTILE_ENV_NAME, "value": "v"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "env" in exc_info.value.why
+
+
+@pytest.mark.parametrize("name", ["OK", "_OK", "OK.NAME", "OK-NAME", "OK_1"])
+def test_valid_env_names_accepted(tmp_path: Path, name: str) -> None:
+    app = {**VALID_APP, "env": [{"name": name, "value": "v"}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].name == name
+
+
+def test_env_value_stays_free_text(tmp_path: Path) -> None:
+    """EnvVar.value is deliberately NOT validated — users need to put
+    arbitrary strings there. Safety for this field comes from `| tojson`
+    escaping at the template layer (test_render.py), not from rejecting it
+    here.
+    """
+    hostile_value = 'x"\n        securityContext:\n          privileged: true'
+    app = {**VALID_APP, "env": [{"name": "OK", "value": hostile_value}]}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.env[0].value == hostile_value
+
+
+def test_invalid_branch_injection_payload_rejected(tmp_path: Path) -> None:
+    platform = {**VALID_PLATFORM, "branch": _HOSTILE_BRANCH}
+    p = _write(tmp_path, VALID_APP, platform)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "branch" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "branch",
+    [
+        "main",
+        "cli-platform",
+        "feature/foo",
+        "release-1.0",
+        "-leading-hyphen",  # rejected: leading '-'
+        "trailing/",  # rejected: trailing '/'
+        "has..dotdot",  # rejected: '..'
+        "ends.lock",  # rejected: trailing '.lock'
+        "has space",  # rejected: not in the allowed charset
+        'has"quote',  # rejected: not in the allowed charset
+    ],
+)
+def test_branch_validation(tmp_path: Path, branch: str) -> None:
+    platform = {**VALID_PLATFORM, "branch": branch}
+    p = _write(tmp_path, VALID_APP, platform)
+    if branch in ("main", "cli-platform", "feature/foo", "release-1.0"):
+        cfg = config.load(p)
+        assert cfg.platform.branch == branch
+    else:
+        with pytest.raises(NexusError) as exc_info:
+            config.load(p)
+        assert "branch" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "path",
+    ['/health"path', "/health path", "/health\npath"],
+)
+def test_invalid_health_path_hostile_chars_rejected(tmp_path: Path, path: str) -> None:
+    app = {**VALID_APP, "healthPath": path}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "healthPath" in exc_info.value.why
+
+
+@pytest.mark.parametrize(
+    "path",
+    ['/metrics"path', "/metrics path", "/metrics\npath"],
+)
+def test_invalid_metrics_path_hostile_chars_rejected(tmp_path: Path, path: str) -> None:
+    app = {**VALID_APP, "metricsPath": path}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert "metricsPath" in exc_info.value.why

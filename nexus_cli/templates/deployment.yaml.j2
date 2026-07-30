@@ -22,27 +22,32 @@ spec:
 {% endif %}
       containers:
       - name: {{ app.name }}
-        image: {{ app.image }}
-        imagePullPolicy: {{ app.imagePullPolicy }}
+        image: {{ app.image | tojson }}
+        imagePullPolicy: {{ app.imagePullPolicy | tojson }}
         ports:
         - containerPort: {{ app.port }}
 {% if app.env %}
         env:
 {% for var in app.env %}
-        - name: {{ var.name }}
-          value: "{{ var.value }}"
+        # `| tojson` on both fields: `name` is schema-validated to a safe
+        # charset (config.py's EnvVar), but `value` is deliberately free
+        # text (it's the one field users need to put arbitrary strings in),
+        # so escaping here is the actual fix, not defense in depth. See
+        # docs/INTERVIEW-BRIEF.md for the injection this closes.
+        - name: {{ var.name | tojson }}
+          value: {{ var.value | tojson }}
 {% endfor %}
 {% endif %}
         resources:
           requests:
-            cpu: {{ app.resources.requests.cpu }}
-            memory: {{ app.resources.requests.memory }}
+            cpu: {{ app.resources.requests.cpu | tojson }}
+            memory: {{ app.resources.requests.memory | tojson }}
           limits:
-            cpu: {{ app.resources.limits.cpu }}
-            memory: {{ app.resources.limits.memory }}
+            cpu: {{ app.resources.limits.cpu | tojson }}
+            memory: {{ app.resources.limits.memory | tojson }}
         readinessProbe:
           httpGet:
-            path: {{ app.healthPath }}
+            path: {{ app.healthPath | tojson }}
             port: {{ app.port }}
           initialDelaySeconds: 3
           periodSeconds: 5
@@ -50,7 +55,7 @@ spec:
           failureThreshold: 3
         livenessProbe:
           httpGet:
-            path: {{ app.healthPath }}
+            path: {{ app.healthPath | tojson }}
             port: {{ app.port }}
           initialDelaySeconds: 5
           periodSeconds: 10
