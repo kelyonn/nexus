@@ -335,3 +335,22 @@ All notable changes to Nexus are documented here. Format based on
   or `pip --user`, verifies `nexus --version` after. Live-tested end-to-end
   against a locally built wheel (the real PyPI package doesn't exist until
   the first tagged release).
+- `tests/integration/conftest.py`'s tolerance for a non-zero `nexus deploy`
+  exit (needed because every test's `scratch_repo` has no git remote, so
+  ArgoCD's `sync` can never reach `Synced`) now parses the CLI's own
+  reported `sync`/`health` status instead of matching on the error message's
+  substring alone. Previously *any* cause of the "did not become Synced +
+  Healthy" timeout was tolerated — including a genuinely `Degraded` app,
+  which would have passed the suite silently. Now only `sync` never reaching
+  `Synced` is tolerated; a `Synced`-but-unhealthy result fails the test.
+  Covered by a new fast unit test (`tests/unit/test_integration_conftest.py`)
+  so this parsing logic doesn't need a live cluster to verify.
+- `ci.yml`'s `push` trigger is now scoped to `main` — previously unscoped,
+  so every commit to a branch with an open PR ran the full suite (two Kind
+  clusters, four npm builds) twice: once via `push`, once via `pull_request`.
+- Added `chaos-canary.yml`, a weekly scheduled (and manually triggerable) run
+  of the chaos integration test *without* `continue-on-error`. The PR-facing
+  `integration-chaos` job stays soft-gated on purpose (Chaos Mesh's Helm
+  install settling on Kind's shared CI runners is infra-timing that must
+  never block a merge), which also means a persistent real regression there
+  would fail silently forever with no other signal — this gives it one.
