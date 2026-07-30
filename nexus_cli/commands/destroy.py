@@ -98,9 +98,7 @@ def destroy(
 
     name = cfg.app.name
 
-    output.step("")
-    output.step(f"Nexus Destroy — {name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Destroy — {name}")
     _print_resource_list(cfg)
     output.step("")
 
@@ -117,7 +115,7 @@ def destroy(
     steps = destroy_steps(cfg)
     total = len(steps)
     for i, (label, fn) in enumerate(steps, start=1):
-        output.step(f"[{i}/{total}] {label}")
+        output.info(f"[{i}/{total}] {label}")
         try:
             fn()
         except output.NexusError as err:
