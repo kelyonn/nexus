@@ -49,6 +49,10 @@ Print each pod's log tail, prefixed with the pod name.
 |---|---|
 | `--config <str>` | Path to the `nexus.yaml` to read. Default: `nexus.yaml` |
 | `--tail <int>` | Number of lines to show per pod. Default: `50` |
+| `-f`, `--follow` | Stream logs continuously from every pod until Ctrl+C, like `kubectl logs -f`. |
+
+`--follow` streams every matching pod concurrently (one thread per pod),
+interleaved and prefixed the same way as the default snapshot output.
 
 ## `nexus doctor`
 
@@ -92,6 +96,7 @@ Chaos Mesh themselves are left installed.
 | Flag | Description |
 |---|---|
 | `--config <str>` | Path to the `nexus.yaml` to read. Default: `nexus.yaml` |
+| `--dry-run` | Show what would be deleted without deleting anything, or prompting. |
 
 ## `nexus chaos run`
 
