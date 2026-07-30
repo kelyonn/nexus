@@ -144,6 +144,23 @@ All notable changes to Nexus are documented here. Format based on
   the Deployment correctly references it, rotating credentials and
   redeploying updates the Secret in place (idempotent, no duplication), and
   `nexus destroy` cleans it up (implicitly, via namespace deletion).
+- `nexus destroy --dry-run`: prints exactly the same resource list the real
+  run already showed before its confirmation prompt (now also including
+  the imagePullSecret when `app.registry` is set — a gap in that listing
+  found while touching it), then stops before prompting. A second, cheaper
+  safety net on top of the existing typed-name confirmation for the most
+  destructive command in the CLI.
+- `nexus logs --follow` / `-f`: streams every matching pod's logs live,
+  concurrently, prefixed by pod name like the existing snapshot output —
+  the same `kubectl logs -f` mental model `nexus watch` already uses for
+  pod events. One thread per pod (`kubernetes.watch.Watch()` genuinely
+  supports following a log stream, not just watching list events — verified
+  against the installed SDK's source, not assumed). Live-verified against a
+  real cluster, including Ctrl+C actually stopping it: an initial test via a
+  backgrounded shell job falsely suggested a hang, which turned out to be
+  the shell itself ignoring `SIGINT` for background jobs, not this code —
+  re-tested with a wrapper that resets `SIGINT` to its default disposition
+  first, matching a real terminal, and it stops immediately as intended.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
