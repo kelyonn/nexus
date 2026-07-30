@@ -122,6 +122,6 @@ def destroy(
             output.print_error(err)
             raise typer.Exit(code=1) from err
         output.success("    done")
+        output.step("")
 
-    output.step("")
     output.success(f"{name} has been fully removed.")
