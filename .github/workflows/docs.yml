@@ -15,7 +15,9 @@ on:
     branches: [main]
     paths:
       - "docs_site/**"
+      - "overrides/**"
       - "mkdocs.yml"
+      - "scripts/check_links.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -44,6 +46,12 @@ jobs:
 
       - name: Build (strict — fails on broken internal links)
         run: mkdocs build --strict
+
+      # --strict only validates links written in markdown; the homepage is a
+      # Jinja template (overrides/home.html), so its links need checking
+      # against the built HTML.
+      - name: Check every internal link in the built site
+        run: python scripts/check_links.py
 
       - uses: actions/configure-pages@v5
 
