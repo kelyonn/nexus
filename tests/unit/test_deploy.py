@@ -57,6 +57,11 @@ def _stub_common(monkeypatch: pytest.MonkeyPatch, *, all_installed: bool = True)
         ],
     )
     monkeypatch.setattr(helm, "release_exists", lambda release, ns: all_installed)
+    # Every one of these calls the real kubectl/git otherwise — mocked here,
+    # not per-test, after a gap where a newly-added step (apply_namespace)
+    # wasn't mocked and a real `kubectl apply` ran against whatever cluster
+    # happened to be on this machine's current context during a test run.
+    monkeypatch.setattr(deploy_module, "apply_namespace", lambda cfg: None)
     monkeypatch.setattr(deploy_module, "apply_app_manifests", lambda cfg: None)
     monkeypatch.setattr(deploy_module, "sync_manifests_to_git", lambda cfg: "pushed to origin/main")
     monkeypatch.setattr(deploy_module, "register_argocd_app", lambda cfg: None)
@@ -154,9 +159,10 @@ def test_deploy_skips_already_installed_deps(
     result = runner.invoke(app, ["deploy"], input="y\n")
     assert result.exit_code == 0, result.output
     assert "present → skip" in result.output
-    assert "1. Apply app manifests" in result.output
-    assert "2. Commit manifests to Git" in result.output
-    assert "3. Register ArgoCD app" in result.output
+    assert "1. Apply namespace" in result.output
+    assert "2. Apply app manifests" in result.output
+    assert "3. Commit manifests to Git" in result.output
+    assert "4. Register ArgoCD app" in result.output
     assert "pushed to origin/main" in result.output
 
 
@@ -188,9 +194,13 @@ def test_deploy_without_registry_has_no_pull_secret_step(
     assert "imagePullSecret" not in result.output
 
 
-def test_deploy_with_registry_creates_pull_secret_after_apply_manifests(
+def test_deploy_with_registry_creates_pull_secret_before_apply_manifests(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """The Deployment references this Secret via imagePullSecrets, so it
+    must exist before apply_app_manifests runs (see apply_registry_secret's
+    docstring — this used to run the other way around).
+    """
     (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
     monkeypatch.chdir(tmp_path)
     _stub_common(monkeypatch, all_installed=True)
@@ -206,7 +216,7 @@ def test_deploy_with_registry_creates_pull_secret_after_apply_manifests(
     result = runner.invoke(app, ["deploy", "--yes"])
     assert result.exit_code == 0, result.output
     assert "Create imagePullSecret → my-app-registry" in result.output
-    assert calls == ["apply_manifests", "apply_registry_secret"]
+    assert calls == ["apply_registry_secret", "apply_manifests"]
 
 
 def test_deploy_registry_secret_failure_stops_deploy(
@@ -243,6 +253,137 @@ def test_apply_registry_secret_delegates_to_registry_module(
     monkeypatch.setattr(deploy_module.registry, "apply_pull_secret", lambda app: calls.append(app))
     deploy_module.apply_registry_secret(cfg)
     assert calls == [cfg.app]
+
+
+VALID_YAML_WITH_APP_SECRETS = """
+app:
+  name: my-app
+  image: myrepo/app:latest
+  port: 8080
+  healthPath: /health
+  secrets:
+    - name: DB_PASSWORD
+      valueEnv: APP_DB_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def test_deploy_without_secrets_has_no_secret_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    result = runner.invoke(app, ["deploy"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "Create Secret" not in result.output
+
+
+def test_deploy_with_secrets_creates_secret_before_apply_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Same ordering requirement as the registry secret: the Deployment
+    references this Secret via secretKeyRef, so it must exist first.
+    """
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_APP_SECRETS)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        deploy_module, "apply_app_manifests", lambda cfg: calls.append("apply_manifests")
+    )
+    monkeypatch.setattr(
+        deploy_module, "apply_app_secret", lambda cfg: calls.append("apply_app_secret")
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Create Secret → my-app-secrets" in result.output
+    assert calls == ["apply_app_secret", "apply_manifests"]
+
+
+def test_deploy_app_secret_failure_stops_deploy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_APP_SECRETS)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    def failing_secret_step(cfg: object) -> None:
+        raise NexusError(what="Secret env var(s) not set: APP_DB_PASSWORD.")
+
+    monkeypatch.setattr(deploy_module, "apply_app_secret", failing_secret_step)
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code != 0
+    assert "aborted at this step" in result.output
+    assert "APP_DB_PASSWORD" in result.output
+
+
+def test_apply_app_secret_delegates_to_secrets_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = NexusConfig(
+        app=AppConfig(
+            name="my-app",
+            image="ghcr.io/me/my-app:v1",
+            port=8080,
+            healthPath="/health",
+        ),
+        platform=PlatformConfig(repoURL="https://github.com/user/repo.git", branch="main"),
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(deploy_module.secrets, "apply_app_secret", lambda app: calls.append(app))
+    deploy_module.apply_app_secret(cfg)
+    assert calls == [cfg.app]
+
+
+def test_deploy_namespace_secrets_manifests_ordering_with_both_secret_kinds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The durable regression guard for the ordering fix itself: with both
+    app.registry and app.secrets set, the plan is namespace -> registry
+    secret -> app secret -> manifests, in that order — not the order they
+    happen to be declared in nexus.yaml.
+    """
+    combined_yaml = """
+app:
+  name: my-app
+  image: ghcr.io/me/my-app:latest
+  port: 8080
+  healthPath: /health
+  registry:
+    server: ghcr.io
+    usernameEnv: REGISTRY_USERNAME
+    passwordEnv: REGISTRY_PASSWORD
+  secrets:
+    - name: DB_PASSWORD
+      valueEnv: APP_DB_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+    (tmp_path / "nexus.yaml").write_text(combined_yaml)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(deploy_module, "apply_namespace", lambda cfg: calls.append("namespace"))
+    monkeypatch.setattr(
+        deploy_module, "apply_registry_secret", lambda cfg: calls.append("registry_secret")
+    )
+    monkeypatch.setattr(deploy_module, "apply_app_secret", lambda cfg: calls.append("app_secret"))
+    monkeypatch.setattr(
+        deploy_module, "apply_app_manifests", lambda cfg: calls.append("manifests")
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert calls == ["namespace", "registry_secret", "app_secret", "manifests"]
 
 
 def test_deploy_yes_flag_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -365,7 +506,12 @@ def test_dependency_status_monitoring_and_chaos_on(monkeypatch: pytest.MonkeyPat
     assert [d[0] for d in deps] == ["ArgoCD", "kube-prometheus-stack", "Chaos Mesh"]
 
 
-def test_apply_app_manifests_skips_argocd_app(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_apply_app_manifests_skips_namespace_and_argocd_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both are applied separately: the namespace by apply_namespace (must
+    run first, see its docstring), and argocd-app by register_argocd_app.
+    """
     cfg = _minimal_config()
     applied: list[str] = []
     monkeypatch.setattr(
@@ -376,8 +522,21 @@ def test_apply_app_manifests_skips_argocd_app(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(deploy_module.kubectl, "apply_manifest", lambda text: applied.append(text))
     deploy_module.apply_app_manifests(cfg)
     assert "argo-yaml" not in applied
-    assert "ns-yaml" in applied
+    assert "ns-yaml" not in applied
     assert "deploy-yaml" in applied
+
+
+def test_apply_namespace_applies_only_the_namespace_template(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = _minimal_config()
+    applied: list[str] = []
+    monkeypatch.setattr(
+        deploy_module.render, "render_template", lambda name, c: f"{name}-yaml"
+    )
+    monkeypatch.setattr(deploy_module.kubectl, "apply_manifest", lambda text: applied.append(text))
+    deploy_module.apply_namespace(cfg)
+    assert applied == ["namespace-yaml"]
 
 
 def test_register_argocd_app_registers_only_the_argocd_template(

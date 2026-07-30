@@ -135,12 +135,19 @@ def scratch_repo(tmp_path: Path) -> Path:
 
 
 def write_flask_demo_config(
-    dest_dir: Path, *, app_name: str, image: str | None = None, chaos: bool | None = None
+    dest_dir: Path,
+    *,
+    app_name: str,
+    image: str | None = None,
+    chaos: bool | None = None,
+    secrets: list[dict[str, str]] | None = None,
 ) -> Path:
     """Copy examples/flask-demo/nexus.yaml into a scratch dir, with a unique
     app name (so parallel/repeated test runs never collide on a namespace),
-    an optional image override (bad-image partial-failure test), and an
-    optional chaos toggle (chaos-run integration test).
+    an optional image override (bad-image partial-failure test), an optional
+    chaos toggle (chaos-run integration test), and an optional app.secrets
+    list (e.g. [{"name": "DB_PASSWORD", "valueEnv": "APP_DB_PASSWORD"}]) for
+    the app.secrets end-to-end test.
     """
     data = yaml.safe_load(FLASK_DEMO_CONFIG.read_text())
     data["app"]["name"] = app_name
@@ -148,6 +155,8 @@ def write_flask_demo_config(
         data["app"]["image"] = image
     if chaos is not None:
         data["platform"]["chaos"] = chaos
+    if secrets is not None:
+        data["app"]["secrets"] = secrets
     dest = dest_dir / "nexus.yaml"
     dest.write_text(yaml.safe_dump(data, sort_keys=False))
     return dest

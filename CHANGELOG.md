@@ -150,6 +150,22 @@ All notable changes to Nexus are documented here. Format based on
   found while touching it), then stops before prompting. A second, cheaper
   safety net on top of the existing typed-name confirmation for the most
   destructive command in the CLI.
+- `app.secrets` in `nexus.yaml`: real app secrets (a DB password, an API
+  key), modeled directly on `app.registry`'s existing pattern — each entry
+  names an environment variable to read the actual value from at deploy
+  time, never the value itself. `nexus deploy` creates/updates the resulting
+  Secret imperatively via `kubectl` (short-lived 0600 temp files, one per
+  key, never a `--from-literal=...` argument) and never writes it to `k8s/`.
+  The Deployment references it via `valueFrom.secretKeyRef`. Applied and
+  removed alongside the app's namespace, same as the registry Secret.
+  `nexus doctor` checks the named env vars are set (never prints their
+  values). `app.env` additionally now rejects values that look
+  credential-shaped (a deny-list on the field name plus a couple of
+  value patterns) with a `plaintext: true` escape hatch for false positives
+  — nudging real secrets toward `app.secrets` instead of `nexus.yaml`'s
+  free-text `env` list, which gets committed to git. See
+  `docs_site/schema.md`'s `secrets` section and `FUTURE-SCOPE.md` §1 for
+  what's still open (encrypting a secret at rest in git itself).
 - `nexus logs --follow` / `-f`: streams every matching pod's logs live,
   concurrently, prefixed by pod name like the existing snapshot output —
   the same `kubectl logs -f` mental model `nexus watch` already uses for
@@ -190,6 +206,12 @@ All notable changes to Nexus are documented here. Format based on
   `app.imagePullPolicy` (`Always | IfNotPresent | Never`, default `Always`) to
   `nexus.yaml`, templated it, and updated the fix message to mention setting
   `IfNotPresent` alongside the load command.
+- `nexus deploy` now applies the Namespace and both kinds of Secret
+  (imagePullSecret, and the new `app.secrets` Secret) before the Deployment
+  that references them, instead of after — the previous ordering meant a
+  fresh `nexus deploy` briefly applied a Deployment referencing a Secret
+  that didn't exist yet (self-correcting once kubelet retried, but a real
+  race, and now closed for both Secret kinds together).
 - Values interpolated into generated manifests (`app.env[].value`,
   `app.env[].name`, `platform.branch`, `app.healthPath`, `app.metricsPath`)
   are now schema-validated to a safe charset and/or JSON-escaped (`| tojson`)

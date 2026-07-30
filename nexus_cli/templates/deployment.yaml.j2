@@ -26,7 +26,7 @@ spec:
         imagePullPolicy: {{ app.imagePullPolicy | tojson }}
         ports:
         - containerPort: {{ app.port }}
-{% if app.env %}
+{% if app.env or app.secrets %}
         env:
 {% for var in app.env %}
         # `| tojson` on both fields: `name` is schema-validated to a safe
@@ -36,6 +36,16 @@ spec:
         # docs/INTERVIEW-BRIEF.md for the injection this closes.
         - name: {{ var.name | tojson }}
           value: {{ var.value | tojson }}
+{% endfor %}
+{% for secret in app.secrets %}
+        # Real secrets never appear here as `value:` — only a reference to a
+        # key in a Secret that core/secrets.py applies imperatively and
+        # never writes to k8s/. See SecretVar's docstring in core/config.py.
+        - name: {{ secret.name | tojson }}
+          valueFrom:
+            secretKeyRef:
+              name: {{ app.secret_name | tojson }}
+              key: {{ secret.name | tojson }}
 {% endfor %}
 {% endif %}
         resources:
