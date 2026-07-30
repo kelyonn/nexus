@@ -52,7 +52,8 @@ def format_error(err: NexusError) -> str:
 
 
 def print_error(err: NexusError) -> None:
-    """Print a NexusError to stderr in red."""
+    """Print a NexusError to stderr in red, set off by a blank line above it."""
+    typer.echo("", err=True)
     typer.secho(format_error(err), fg=RED, err=True)
 
 
