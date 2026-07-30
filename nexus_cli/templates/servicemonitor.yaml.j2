@@ -19,5 +19,5 @@ spec:
       app: {{ app.name }}
   endpoints:
     - port: {{ metrics_port_name }}
-      path: {{ app.metricsPath }}
+      path: {{ app.metricsPath | tojson }}
       interval: 15s

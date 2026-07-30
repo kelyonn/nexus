@@ -1,3 +1,13 @@
+{# `app.name` below is interpolated raw (no `| tojson`), unlike every other
+   template in nexus_cli/templates/. Deliberate: here it sits inside JSON
+   string literals inside a YAML block scalar (each `*.json: |-` dashboard
+   body) — `| tojson` would add a second layer of JSON-string quoting and
+   corrupt the payload rather than protect it (that's why the manual `\"`
+   escaping below exists in the JSON itself, e.g. line ~29). Safe to leave
+   raw because `app.name` is already regex-validated to `^[a-z0-9-]+$`
+   (config.py's AppConfig._name) — a charset with no quotes or newlines, so
+   nothing here can break out of the YAML block scalar or the embedded JSON.
+   See docs/INTERVIEW-BRIEF.md for why the fix isn't applied uniformly. #}
 apiVersion: v1
 kind: ConfigMap
 metadata:

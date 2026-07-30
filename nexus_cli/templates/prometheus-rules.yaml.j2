@@ -1,3 +1,13 @@
+{# `app.name` below is interpolated raw (no `| tojson`), unlike every other
+   template in nexus_cli/templates/. That's deliberate, not an oversight:
+   here it sits inside PromQL label matchers inside a YAML block scalar
+   (`expr: |`), where `| tojson` would inject JSON-string quoting into the
+   PromQL and corrupt the alert expression rather than protect it. It's safe
+   to leave raw because `app.name` is already regex-validated to
+   `^[a-z0-9-]+$` (config.py's AppConfig._name) — a charset with no quotes,
+   newlines, or PromQL metacharacters, so nothing here can break out of
+   either the YAML block scalar or the PromQL expression. See
+   docs/INTERVIEW-BRIEF.md for why the fix isn't applied uniformly. #}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
 metadata:

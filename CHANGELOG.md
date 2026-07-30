@@ -190,6 +190,15 @@ All notable changes to Nexus are documented here. Format based on
   `app.imagePullPolicy` (`Always | IfNotPresent | Never`, default `Always`) to
   `nexus.yaml`, templated it, and updated the fix message to mention setting
   `IfNotPresent` alongside the load command.
+- Values interpolated into generated manifests (`app.env[].value`,
+  `app.env[].name`, `platform.branch`, `app.healthPath`, `app.metricsPath`)
+  are now schema-validated to a safe charset and/or JSON-escaped (`| tojson`)
+  at the template layer, and every rendered manifest is parsed before being
+  returned. Previously an env value containing a bare double quote produced
+  invalid YAML — a real bug, not just a hardening concern, since it's a
+  completely ordinary value to want to set. `core/render.py` also gained a
+  parse-and-verify step so malformed template output now fails as a clear
+  `NexusError` instead of a raw parser error reaching `kubectl apply`.
 
 ### Changed
 - The CLI's terminal output now draws from one shared palette instead of each

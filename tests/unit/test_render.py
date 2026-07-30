@@ -38,6 +38,7 @@ from pathlib import Path
 import pytest
 
 from nexus_cli.core import config, render
+from nexus_cli.core.output import NexusError
 
 FLASK_DEMO = Path(__file__).resolve().parents[2] / "examples" / "flask-demo" / "nexus.yaml"
 
@@ -402,6 +403,154 @@ def test_registry_set_adds_image_pull_secrets_referencing_derived_name(
         {"name": flask_demo_config.app.registry_secret_name}
     ]
     assert flask_demo_config.app.registry_secret_name == "nexus-app-registry"
+
+
+# --- injection hardening (see docs/INTERVIEW-BRIEF.md) ---
+#
+# `EnvVar.value` is deliberately NOT schema-validated (test_config.py's
+# test_env_value_stays_free_text) — users need to put arbitrary strings
+# there, so `config.load()` can't be the fix for this field. Safety comes
+# from `| tojson` escaping every YAML-scalar interpolation in the templates
+# themselves. These tests render the *verified* payload (confirmed, before
+# this fix, to make `securityContext: {privileged: true}` land on the
+# container) and prove it now round-trips as inert data instead.
+
+_QUOTE_BREAKOUT_PAYLOAD = (
+    'x"\n        securityContext:\n          privileged: true\n        stdin: "true'
+)
+
+_EXPECTED_CONTAINER_KEYS = {
+    "name",
+    "image",
+    "imagePullPolicy",
+    "ports",
+    "env",
+    "resources",
+    "readinessProbe",
+    "livenessProbe",
+}
+
+
+def test_env_value_quote_breakout_no_longer_injects(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.env = [config.EnvVar(name="HOSTILE", value=_QUOTE_BREAKOUT_PAYLOAD)]
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+
+    # The whole point: no sibling key was injected onto the container.
+    assert set(container) == _EXPECTED_CONTAINER_KEYS
+    assert "securityContext" not in container
+    assert "stdin" not in container
+
+    # And the value survives byte-exact as inert data, since this field must
+    # stay usable for legitimate free-text values.
+    env = {e["name"]: e["value"] for e in container["env"]}
+    assert env["HOSTILE"] == _QUOTE_BREAKOUT_PAYLOAD
+
+
+def test_env_value_with_plain_quote_still_parses(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """Before the fix, a value as mundane as `say "hi"` produced unparseable
+    YAML (an availability bug, not just a security one) — the unescaped
+    `value: "{{ var.value }}"` broke on the embedded quote alone.
+    """
+    flask_demo_config.app.env = [config.EnvVar(name="MSG", value='say "hi"')]
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    env = {e["name"]: e["value"] for e in container["env"]}
+    assert env["MSG"] == 'say "hi"'
+
+
+def test_hostile_env_value_across_every_template_still_parses(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """The durable regression guard: render every template this config can
+    produce (monitoring + chaos both on) with a hostile env value present,
+    and confirm every document is still parseable YAML with no unexpected
+    top-level structure. `env.value` is the only field that reaches a
+    template without being schema-restricted to a safe charset (see
+    test_config.py's injection-hardening suite for the rest), so it's the
+    one that has to be proven safe at the template layer.
+    """
+    import json
+
+    flask_demo_config.app.env = [config.EnvVar(name="HOSTILE", value=_QUOTE_BREAKOUT_PAYLOAD)]
+    flask_demo_config.app.metricsPath = "/metrics"
+    flask_demo_config.platform.chaos = True
+
+    rendered = render.render_manifests(flask_demo_config)
+    assert set(rendered) == {
+        "namespace",
+        "deployment",
+        "service",
+        "argocd-app",
+        "prometheus-rules",
+        "grafana-dashboard",
+        "servicemonitor",
+        "podchaos",
+    }
+
+    # Every Nexus-generated resource has this shape; namespace.yaml.j2 has no
+    # spec (a Namespace has none) and grafana-dashboard.yaml.j2 is a
+    # ConfigMap (data, not spec) — both are the known exceptions, everything
+    # else must match exactly.
+    base_keys = {"apiVersion", "kind", "metadata"}
+    expected_by_name = {
+        "namespace": base_keys,
+        "grafana-dashboard": base_keys | {"data"},
+    }
+    for name, text in rendered.items():
+        expected = expected_by_name.get(name, base_keys | {"spec"})
+        for doc in render.parse_documents(text):
+            assert isinstance(doc, dict)
+            assert set(doc) == expected
+            if name == "grafana-dashboard":
+                for payload in doc["data"].values():
+                    json.loads(payload)  # every dashboard body is still valid JSON
+
+    # The one place the payload should actually show up: as inert env data.
+    (deploy_doc,) = render.parse_documents(rendered["deployment"])
+    container = deploy_doc["spec"]["template"]["spec"]["containers"][0]
+    assert set(container) == _EXPECTED_CONTAINER_KEYS
+
+
+# --- render_template() and the malformed-YAML defense-in-depth check ---
+
+
+def test_render_template_renders_single_named_template(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """`render_template` (used by e.g. `nexus chaos schedule enable` to apply
+    one manifest imperatively) goes through the same `_render_and_verify`
+    path as `render_manifests` — exercised here for real, not monkeypatched
+    away, unlike its one existing caller in tests/unit/test_chaos.py.
+    """
+    text = render.render_template("podchaos", flask_demo_config)
+    (doc,) = render.parse_documents(text)
+    assert doc["kind"] == "Schedule"
+
+
+def test_render_and_verify_raises_nexus_error_on_malformed_yaml_output() -> None:
+    """Defense in depth (core/render.py's `_render_and_verify`): if a
+    template ever produced malformed YAML — despite schema validation and
+    `| tojson` escaping — it must fail as a clear NexusError before reaching
+    `kubectl apply`, not surface a raw parser traceback. The real templates
+    can no longer be forced into producing invalid YAML (that's the point of
+    the rest of this test file), so this simulates the failure with a
+    deliberately broken template to prove the safety net itself works.
+    """
+    import jinja2
+
+    broken_env = jinja2.Environment(
+        loader=jinja2.DictLoader({"broken.yaml.j2": "key: [unclosed"})
+    )
+    with pytest.raises(NexusError) as exc_info:
+        render._render_and_verify(broken_env, "broken", {})
+    assert "broken.yaml.j2" in exc_info.value.what
 
 
 def test_different_app_name_is_consistent_across_all_templates(

@@ -26,6 +26,19 @@ _MEMORY_RE = re.compile(r"^\d+(Ki|Mi|Gi|Ti|Pi|Ei|K|M|G|T|P|E)?$")
 _HTTPS_GIT_RE = re.compile(r"^https://[\w.\-]+(:\d+)?/[\w.\-/]+?(\.git)?$")
 _SSH_GIT_RE = re.compile(r"^(ssh://)?git@[\w.\-]+[:/][\w.\-/]+?(\.git)?$")
 _CRON_FIELD_RE = re.compile(r"^[\d*/,\-]+$")
+# Kubernetes' own env-var-name convention (C_IDENTIFIER-ish, what kubelet
+# recommends) — deliberately also the charset that can't break out of an
+# unquoted Jinja scalar in deployment.yaml.j2's `name: {{ var.name }}`.
+# `| tojson` at the template layer is the real fix (this survives even if a
+# template later drops it); this is belt-and-suspenders at the schema layer,
+# and it also just rejects env var names no Kubernetes container would accept.
+_ENV_NAME_RE = re.compile(r"^[-._a-zA-Z][-._a-zA-Z0-9]*$")
+# A conservative, allow-listed charset for anything that ends up interpolated
+# into generated YAML/PromQL/JSON: letters, digits, and `.-_/`. No quotes, no
+# whitespace, no control characters, no YAML/git metacharacters — so nothing
+# in this charset can break out of a scalar or a URL path, full stop.
+_SAFE_PATH_RE = re.compile(r"^/[\w./\-]*$")
+_SAFE_BRANCH_RE = re.compile(r"^[\w.\-/]+$")
 
 
 def _validate_cpu(value: str) -> str:
@@ -45,6 +58,16 @@ class EnvVar(BaseModel):
 
     name: str
     value: str
+
+    @field_validator("name")
+    @classmethod
+    def _env_name(cls, v: str) -> str:
+        if not _ENV_NAME_RE.match(v):
+            raise ValueError(
+                "must be a valid environment variable name "
+                "(letters, digits, '_', '.', '-'; can't start with a digit)"
+            )
+        return v
 
 
 class ResourceQuantities(BaseModel):
@@ -142,15 +165,19 @@ class AppConfig(BaseModel):
     @field_validator("healthPath")
     @classmethod
     def _health_path(cls, v: str) -> str:
-        if not v.startswith("/"):
-            raise ValueError("must start with '/'")
+        if not _SAFE_PATH_RE.match(v):
+            raise ValueError(
+                "must start with '/' and contain only letters, digits, '.', '-', '_', '/'"
+            )
         return v
 
     @field_validator("metricsPath")
     @classmethod
     def _metrics_path(cls, v: str | None) -> str | None:
-        if v is not None and not v.startswith("/"):
-            raise ValueError("must start with '/'")
+        if v is not None and not _SAFE_PATH_RE.match(v):
+            raise ValueError(
+                "must start with '/' and contain only letters, digits, '.', '-', '_', '/'"
+            )
         return v
 
     @property
@@ -182,6 +209,32 @@ class PlatformConfig(BaseModel):
     def _repo_url(cls, v: str) -> str:
         if not (_HTTPS_GIT_RE.match(v) or _SSH_GIT_RE.match(v)):
             raise ValueError("must be a valid HTTPS or SSH Git URL")
+        return v
+
+    @field_validator("branch")
+    @classmethod
+    def _branch(cls, v: str) -> str:
+        # Unlike repoURL, branch had no validator at all until this fix — and
+        # it lands unquoted in argocd-app.yaml.j2's `targetRevision:` and
+        # flows straight to `kubectl apply` (register_argocd_app). A crafted
+        # branch could rewrite sibling keys in the generated Application
+        # (e.g. `spec.source.path`, `spec.syncPolicy`) — verified against
+        # this template before this fix landed. The allow-listed charset
+        # below (plus the git-ref sanity rules) closes that off entirely,
+        # independent of the `| tojson` escaping added at the template layer.
+        if (
+            not _SAFE_BRANCH_RE.match(v)
+            or ".." in v
+            or v.startswith("-")
+            or v.startswith("/")
+            or v.endswith("/")
+            or v.endswith(".lock")
+            or v.endswith(".")
+        ):
+            raise ValueError(
+                "must be a valid git branch name (letters, digits, '.', '-', '_', '/' only; "
+                "no '..', no leading '-', no leading/trailing '/', no trailing '.' or '.lock')"
+            )
         return v
 
     @field_validator("chaosSchedule")
