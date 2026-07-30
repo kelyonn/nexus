@@ -177,6 +177,23 @@ All notable changes to Nexus are documented here. Format based on
   the shell itself ignoring `SIGINT` for background jobs, not this code —
   re-tested with a wrapper that resets `SIGINT` to its default disposition
   first, matching a real terminal, and it stops immediately as intended.
+- Pod hardening on the generated Deployment: a dedicated per-app
+  `ServiceAccount` (`serviceaccount.yaml.j2`) with `automountServiceAccountToken:
+  false` rather than falling back to the namespace's `default` one;
+  `allowPrivilegeEscalation: false` and dropping all Linux capabilities on
+  every container (no ordinary app needs either, so these are unconditional,
+  not configurable); a `startupProbe` so a slow-booting container gets up to
+  150s before readiness/liveness start counting against it; and
+  `topologySpreadConstraints` (`ScheduleAnyway`, so it helps across multiple
+  nodes without stranding a replica `Pending` forever on the single-node
+  Kind/Minikube clusters this project targets). A new opt-in `app.security`
+  block (`runAsNonRoot`, `runAsUser`, `readOnlyRootFilesystem`) covers the
+  hardening that depends on the image itself and so can't be forced by
+  default — `nexus init` sets `runAsNonRoot: true` for every newly generated
+  `nexus.yaml`. Apps with `replicas >= 2` also get a `PodDisruptionBudget`
+  (`maxUnavailable: 1`), omitted at `replicas: 1` where it would block every
+  voluntary disruption instead of protecting anything. See
+  `docs_site/schema.md`'s `security` section.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git

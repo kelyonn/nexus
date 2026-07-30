@@ -173,6 +173,31 @@ class SecretVar(BaseModel):
         return v
 
 
+class SecurityConfig(BaseModel):
+    """Container security posture for the app's pods.
+
+    Every field here defaults to Kubernetes' own permissive default, not a
+    hardened one — deliberately, unlike the always-on hardening in
+    deployment.yaml.j2 (allowPrivilegeEscalation: false, capabilities.drop:
+    [ALL], which no ordinary container needs and so cost nothing to force).
+    The schema has no way to know whether an arbitrary user's image declares
+    a non-root `USER` or expects to write to its filesystem, and silently
+    defaulting `runAsNonRoot: true` would turn a root-only image (this
+    repo's own `examples/flask-demo`, built from `python:3.9-slim` with no
+    `USER`, predates this field) into an immediate `CreateContainerConfigError`
+    on first deploy — a worse failure than a documented opt-in. `nexus init`
+    sets `runAsNonRoot: true` on every newly generated `nexus.yaml`, so new
+    apps are hardened by default and the choice is visible, in writing, in
+    the user's own config either way.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    runAsNonRoot: bool = False
+    runAsUser: int | None = Field(default=None, ge=0)
+    readOnlyRootFilesystem: bool = False
+
+
 class AppConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -210,6 +235,10 @@ class AppConfig(BaseModel):
     # entry names an env var to read the actual value from at deploy time;
     # nexus.yaml never holds it. See SecretVar's docstring and core/secrets.py.
     secrets: list[SecretVar] = Field(default_factory=list)
+    # Kubernetes' own permissive defaults, not hardened ones — see
+    # SecurityConfig's docstring for why the schema can't safely assume
+    # runAsNonRoot for an arbitrary image. `nexus init` opts new apps in.
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @field_validator("name")
     @classmethod

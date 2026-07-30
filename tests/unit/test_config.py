@@ -574,6 +574,45 @@ def test_credential_value_not_echoed_in_error(tmp_path: Path) -> None:
     assert secret_value not in (exc_info.value.fix or "")
 
 
+# --- app.security (pod/container hardening that depends on the image —
+# see SecurityConfig's docstring for why these default off, unlike the
+# unconditional hardening in deployment.yaml.j2 itself) ---
+
+
+def test_security_unset_defaults_to_kubernetes_permissive_defaults(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.security.runAsNonRoot is False
+    assert cfg.app.security.runAsUser is None
+    assert cfg.app.security.readOnlyRootFilesystem is False
+
+
+def test_security_valid_config_loads(tmp_path: Path) -> None:
+    app = {
+        **VALID_APP,
+        "security": {"runAsNonRoot": True, "runAsUser": 10001, "readOnlyRootFilesystem": True},
+    }
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.security.runAsNonRoot is True
+    assert cfg.app.security.runAsUser == 10001
+    assert cfg.app.security.readOnlyRootFilesystem is True
+
+
+def test_security_negative_run_as_user_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "security": {"runAsUser": -1}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_security_unknown_field_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "security": {"runAsNonRoot": True, "privileged": True}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
 def test_multiple_credential_shaped_env_vars_all_reported(tmp_path: Path) -> None:
     app = {
         **VALID_APP,

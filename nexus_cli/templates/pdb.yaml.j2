@@ -1,0 +1,20 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ app.name }}
+  namespace: {{ app.name }}
+  labels:
+    app: {{ app.name }}
+    managed-by: nexus
+spec:
+  # Only rendered when app.replicas >= 2 (core/render.py) — at replicas: 1,
+  # maxUnavailable: 1 would mean "0 replicas may ever be voluntarily down,"
+  # which blocks a node drain/cordon forever instead of protecting
+  # availability. With >=2 replicas it caps a drain/rollout from taking every
+  # replica at once, which topologySpreadConstraints alone does not (that
+  # only influences where pods land, not whether they can all be evicted
+  # together) — see deployment.yaml.j2's topologySpreadConstraints comment.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: {{ app.name }}

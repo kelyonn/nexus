@@ -22,7 +22,7 @@ from nexus_cli.core.output import NexusError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
-_ALWAYS_ON = ("namespace", "deployment", "service", "argocd-app")
+_ALWAYS_ON = ("namespace", "serviceaccount", "deployment", "service", "argocd-app")
 _MONITORING = ("prometheus-rules", "grafana-dashboard")
 _CHAOS = ("podchaos",)
 
@@ -40,6 +40,13 @@ def _environment() -> Environment:
 def template_names(config: NexusConfig) -> list[str]:
     """The template stems that apply to this config, in render order."""
     names = list(_ALWAYS_ON)
+    # A PDB only protects something that has more than one replica to
+    # protect — at replicas: 1, maxUnavailable: 1 blocks every voluntary
+    # disruption (node drain, cordon) forever instead of preserving
+    # availability, so it's omitted rather than emitted there. See
+    # pdb.yaml.j2's own comment for the full reasoning.
+    if config.app.replicas >= 2:
+        names.append("pdb")
     if config.platform.monitoring:
         names += _MONITORING
         # Opt-in on top of platform.monitoring: a ServiceMonitor only makes

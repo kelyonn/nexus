@@ -64,6 +64,25 @@ def test_init_generic_prompts_for_port_and_health(
     assert data["app"].get("stack") is None  # omitted from YAML (exclude_none)
 
 
+def test_init_generated_config_opts_into_run_as_non_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The schema itself defaults app.security.runAsNonRoot to false (an
+    arbitrary existing image may run as root) — but a freshly generated
+    config has no such image yet, so `nexus init` opts new apps in. See
+    SecurityConfig's docstring in core/config.py.
+    """
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["init", "--stack", "flask"],
+        input="myrepo/app:latest\nhttps://github.com/user/repo.git\nmain\n",
+    )
+    assert result.exit_code == 0, result.stdout
+    data = yaml.safe_load((tmp_path / "nexus.yaml").read_text())
+    assert data["app"]["security"]["runAsNonRoot"] is True
+
+
 def test_init_stack_flag_forces_preset(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "package.json").write_text("{}")  # would auto-detect node

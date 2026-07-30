@@ -59,9 +59,11 @@ def rendered(flask_demo_config: config.NexusConfig) -> dict[str, str]:
 def test_default_config_renders_core_and_monitoring_not_chaos(rendered: dict[str, str]) -> None:
     assert set(rendered) == {
         "namespace",
+        "serviceaccount",
         "deployment",
         "service",
         "argocd-app",
+        "pdb",  # flask-demo's replicas: 2 renders it
         "prometheus-rules",
         "grafana-dashboard",
     }
@@ -149,6 +151,123 @@ def test_deployment_matches_legacy_structure(rendered: dict[str, str]) -> None:
         assert probe["periodSeconds"] == period
         assert probe["timeoutSeconds"] == 2  # legacy: 2 for both probes
         assert probe["failureThreshold"] == 3  # legacy: 3 for both probes
+
+
+# --- pod hardening (deployment.yaml.j2): securityContext, serviceAccount, ---
+# --- startupProbe, topologySpreadConstraints, PDB. No legacy equivalent —  ---
+# --- see nexus_cli/templates/README.md.                                    ---
+
+
+def test_pod_spec_references_dedicated_service_account(rendered: dict[str, str]) -> None:
+    (doc,) = render.parse_documents(rendered["deployment"])
+    pod_spec = doc["spec"]["template"]["spec"]
+    assert pod_spec["serviceAccountName"] == "nexus-app"
+    assert pod_spec["automountServiceAccountToken"] is False
+    assert pod_spec["securityContext"] == {"seccompProfile": {"type": "RuntimeDefault"}}
+
+
+def test_container_security_context_always_hardened_by_default(rendered: dict[str, str]) -> None:
+    """flask-demo doesn't set app.security, so only the unconditional
+    hardening (safe for any image) should appear — not runAsNonRoot/
+    runAsUser/readOnlyRootFilesystem, which depend on the image and default
+    off (SecurityConfig's docstring in core/config.py).
+    """
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert container["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
+
+
+def test_container_security_context_honors_app_security_opt_ins(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.security = config.SecurityConfig(
+        runAsNonRoot=True, runAsUser=10001, readOnlyRootFilesystem=True
+    )
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert container["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+        "runAsNonRoot": True,
+        "runAsUser": 10001,
+        "readOnlyRootFilesystem": True,
+    }
+
+
+def test_startup_probe_present_and_matches_health_path(rendered: dict[str, str]) -> None:
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert container["startupProbe"]["httpGet"] == {"path": "/healthz", "port": 5050}
+    assert container["startupProbe"]["periodSeconds"] * container["startupProbe"][
+        "failureThreshold"
+    ] >= 120
+
+
+def test_topology_spread_present_above_one_replica(rendered: dict[str, str]) -> None:
+    """flask-demo has replicas: 2."""
+    (doc,) = render.parse_documents(rendered["deployment"])
+    pod_spec = doc["spec"]["template"]["spec"]
+    assert pod_spec["topologySpreadConstraints"] == [
+        {
+            "maxSkew": 1,
+            "topologyKey": "kubernetes.io/hostname",
+            "whenUnsatisfiable": "ScheduleAnyway",
+            "labelSelector": {"matchLabels": {"app": "nexus-app"}},
+        }
+    ]
+
+
+def test_topology_spread_absent_at_one_replica(flask_demo_config: config.NexusConfig) -> None:
+    """The negative case: at replicas: 1 there's nothing to spread, and a
+    required (not just preferred) constraint would have no way to be
+    satisfied at all on a single-node cluster — so this is omitted rather
+    than emitted as dead weight.
+    """
+    flask_demo_config.app.replicas = 1
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    pod_spec = doc["spec"]["template"]["spec"]
+    assert "topologySpreadConstraints" not in pod_spec
+
+
+# --- serviceaccount.yaml.j2 ---
+
+
+def test_serviceaccount_rendered_and_token_not_automounted(rendered: dict[str, str]) -> None:
+    (doc,) = render.parse_documents(rendered["serviceaccount"])
+    assert doc["apiVersion"] == "v1"
+    assert doc["kind"] == "ServiceAccount"
+    assert doc["metadata"]["name"] == "nexus-app"
+    assert doc["metadata"]["namespace"] == "nexus-app"
+    assert doc["automountServiceAccountToken"] is False
+
+
+# --- pdb.yaml.j2 ---
+
+
+def test_pdb_present_at_two_replicas(rendered: dict[str, str]) -> None:
+    """flask-demo has replicas: 2."""
+    (doc,) = render.parse_documents(rendered["pdb"])
+    assert doc["apiVersion"] == "policy/v1"
+    assert doc["kind"] == "PodDisruptionBudget"
+    assert doc["metadata"]["name"] == "nexus-app"
+    assert doc["metadata"]["namespace"] == "nexus-app"
+    assert doc["spec"]["maxUnavailable"] == 1
+    assert doc["spec"]["selector"]["matchLabels"] == {"app": "nexus-app"}
+
+
+def test_pdb_absent_at_one_replica(flask_demo_config: config.NexusConfig) -> None:
+    """The negative case is the interesting one: maxUnavailable: 1 at
+    replicas: 1 would mean 0 replicas may ever be voluntarily down, which
+    blocks a node drain forever instead of protecting availability.
+    """
+    flask_demo_config.app.replicas = 1
+    rendered = render.render_manifests(flask_demo_config)
+    assert "pdb" not in rendered
 
 
 # --- service.yaml.j2 (legacy/k8s/service.yaml) ---
@@ -497,9 +616,11 @@ _EXPECTED_CONTAINER_KEYS = {
     "name",
     "image",
     "imagePullPolicy",
+    "securityContext",
     "ports",
     "env",
     "resources",
+    "startupProbe",
     "readinessProbe",
     "livenessProbe",
 }
@@ -513,9 +634,16 @@ def test_env_value_quote_breakout_no_longer_injects(
     (doc,) = render.parse_documents(rendered["deployment"])
     container = doc["spec"]["template"]["spec"]["containers"][0]
 
-    # The whole point: no sibling key was injected onto the container.
+    # No sibling key was injected onto the container...
     assert set(container) == _EXPECTED_CONTAINER_KEYS
-    assert "securityContext" not in container
+    # ...and specifically, the payload's own `securityContext: {privileged:
+    # true}` did not merge into (or override) the real securityContext this
+    # template always renders — it's still exactly the hardened, harmless
+    # value, with no `privileged` key anywhere in it.
+    assert container["securityContext"] == {
+        "allowPrivilegeEscalation": False,
+        "capabilities": {"drop": ["ALL"]},
+    }
     assert "stdin" not in container
 
     # And the value survives byte-exact as inert data, since this field must
@@ -559,9 +687,11 @@ def test_hostile_env_value_across_every_template_still_parses(
     rendered = render.render_manifests(flask_demo_config)
     assert set(rendered) == {
         "namespace",
+        "serviceaccount",
         "deployment",
         "service",
         "argocd-app",
+        "pdb",  # flask-demo's replicas: 2 renders it
         "prometheus-rules",
         "grafana-dashboard",
         "servicemonitor",
@@ -569,12 +699,15 @@ def test_hostile_env_value_across_every_template_still_parses(
     }
 
     # Every Nexus-generated resource has this shape; namespace.yaml.j2 has no
-    # spec (a Namespace has none) and grafana-dashboard.yaml.j2 is a
-    # ConfigMap (data, not spec) — both are the known exceptions, everything
-    # else must match exactly.
+    # spec (a Namespace has none), serviceaccount.yaml.j2 puts
+    # automountServiceAccountToken at the top level (not under spec — a
+    # ServiceAccount has no spec either), and grafana-dashboard.yaml.j2 is a
+    # ConfigMap (data, not spec) — all three are the known exceptions,
+    # everything else must match exactly.
     base_keys = {"apiVersion", "kind", "metadata"}
     expected_by_name = {
         "namespace": base_keys,
+        "serviceaccount": base_keys | {"automountServiceAccountToken"},
         "grafana-dashboard": base_keys | {"data"},
     }
     for name, text in rendered.items():
