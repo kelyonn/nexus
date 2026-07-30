@@ -42,6 +42,8 @@ def init(
     ),
 ) -> None:
     """Detect your app's stack and generate a pre-filled nexus.yaml."""
+    output.banner()
+
     directory = Path.cwd()
     config_path = directory / "nexus.yaml"
 
@@ -51,9 +53,7 @@ def init(
             output.warn("Aborted — nexus.yaml left untouched.")
             raise typer.Exit(code=1)
 
-    output.step("")
-    output.step("Nexus Init")
-    output.step("-" * 43)
+    output.header("Nexus Init")
 
     if stack:
         try:
