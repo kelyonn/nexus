@@ -10,6 +10,22 @@ from __future__ import annotations
 import typer
 from pydantic import ValidationError
 
+# Nexus's terminal palette — muted, not the raw ANSI 8. Every colored helper
+# below draws from this set so `nexus` looks like one tool across commands.
+BLUE = (110, 156, 204)
+GREEN = (127, 184, 148)
+AMBER = (207, 159, 104)
+RED = (201, 123, 123)
+DIM = (124, 133, 145)
+BRIGHT = (232, 236, 241)
+
+BANNER = r"""███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
+████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝
+██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗
+██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║
+██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝"""
+
 
 class NexusError(Exception):
     """A user-facing error with what / why / fix parts (PRD §12).
@@ -37,7 +53,7 @@ def format_error(err: NexusError) -> str:
 
 def print_error(err: NexusError) -> None:
     """Print a NexusError to stderr in red."""
-    typer.secho(format_error(err), fg=typer.colors.RED, err=True)
+    typer.secho(format_error(err), fg=RED, err=True)
 
 
 def from_validation_error(exc: ValidationError, *, source: str = "nexus.yaml") -> NexusError:
@@ -61,7 +77,7 @@ def from_validation_error(exc: ValidationError, *, source: str = "nexus.yaml") -
 
 
 def success(message: str) -> None:
-    typer.secho(f"✓ {message}", fg=typer.colors.GREEN)
+    typer.secho(f"✓ {message}", fg=GREEN)
 
 
 def step(message: str) -> None:
@@ -69,4 +85,28 @@ def step(message: str) -> None:
 
 
 def warn(message: str) -> None:
-    typer.secho(f"! {message}", fg=typer.colors.YELLOW)
+    typer.secho(f"! {message}", fg=AMBER)
+
+
+def check(passed: bool, detail: str) -> None:
+    """One line of a preflight/diagnostic checklist: ✓ in green, ✗ in red."""
+    glyph, color = ("✓", GREEN) if passed else ("✗", RED)
+    typer.secho(f"{glyph} {detail}", fg=color)
+
+
+def header(title: str) -> None:
+    """The banner every command opens with: a bold title over a dim rule."""
+    typer.echo("")
+    typer.secho(title, fg=BRIGHT, bold=True)
+    typer.secho("-" * 43, fg=DIM)
+
+
+def info(message: str) -> None:
+    """A step that's actively happening — numbered progress, "waiting for X"."""
+    typer.secho(message, fg=BLUE)
+
+
+def banner() -> None:
+    """The NEXUS wordmark — shown once, at `nexus init`'s first-run moment."""
+    typer.secho(BANNER, fg=BLUE)
+    typer.echo("")
