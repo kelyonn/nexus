@@ -26,7 +26,17 @@ dev = [
     "ruff",
     "mypy",
     "types-PyYAML",
-    "httpx2",  # only needed for FastAPI's TestClient in tests/unit/test_dashboard_backend.py
+    # httpx2 (not a typo for httpx — see FUTURE-SCOPE.md's "explicitly not on
+    # this list") is only needed for FastAPI's TestClient in
+    # tests/unit/test_dashboard_backend.py / test_dashboard_static.py.
+    # starlette>=1.0 is the actual floor that makes it get used: starlette's
+    # own testclient.py prefers httpx2 and only falls back to plain httpx
+    # (not installed here) below that version — an older resolution would
+    # turn pytest.importorskip("fastapi")'s intended skip into a collection
+    # error instead, since fastapi succeeds importing while its TestClient
+    # then fails. Pinned as a floor, not exact, since this is a library.
+    "httpx2",
+    "starlette>=1.0",
 ]
 dashboard = [
     "fastapi>=0.115",

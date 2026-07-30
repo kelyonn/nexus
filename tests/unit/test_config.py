@@ -613,6 +613,30 @@ def test_security_unknown_field_rejected(tmp_path: Path) -> None:
         config.load(p)
 
 
+# --- app.serviceType ---
+
+
+def test_service_type_defaults_to_cluster_ip(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.serviceType == "ClusterIP"
+
+
+@pytest.mark.parametrize("value", ["ClusterIP", "NodePort", "LoadBalancer"])
+def test_service_type_accepts_valid_values(tmp_path: Path, value: str) -> None:
+    app = {**VALID_APP, "serviceType": value}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.serviceType == value
+
+
+def test_service_type_rejects_invalid_value(tmp_path: Path) -> None:
+    app = {**VALID_APP, "serviceType": "ExternalName"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
 def test_multiple_credential_shaped_env_vars_all_reported(tmp_path: Path) -> None:
     app = {
         **VALID_APP,

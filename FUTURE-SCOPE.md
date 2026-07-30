@@ -139,6 +139,70 @@ recurring pain point (e.g. genuinely needing to hold a long-lived
 `kubernetes` Python SDK client with connection state, not just kubectl
 subprocess calls) — not preemptively.
 
+## 5. Horizontal Pod Autoscaling (`app.autoscaling`)
+
+**Why it's not started:** not a missing feature so much as an unresolved
+conflict between two controllers. `argocd-app.yaml.j2` sets
+`syncPolicy.automated.selfHeal: true` — ArgoCD continuously reverts the live
+cluster state back to whatever `replicas:` says in the git-tracked manifest.
+An HPA's whole job is mutating `spec.replicas` on its own, outside of git.
+Add both as-is and they fight: the HPA scales up under load, ArgoCD's
+self-heal notices the drift from the committed manifest and scales back
+down, every reconcile loop. Shipping that would be worse than not having
+autoscaling at all — it wouldn't just be a no-op, it would make the app
+*flap* under real load, which is the one scenario autoscaling exists to
+help with.
+
+**What resolving it actually requires** (a real design decision, not a quick
+add):
+
+- **`ignoreDifferences`** on the ArgoCD `Application` (a native ArgoCD
+  field, `spec.ignoreDifferences[].jsonPointers`) telling it to stop
+  comparing `spec.replicas` at all once an HPA owns that field. Simplest
+  option, but it's an all-or-nothing switch per Application — there's no
+  "trust the HPA within a range" middle ground, so the git-tracked
+  `replicas:` value becomes purely a "starting point," never enforced again
+  even manually (e.g. `nexus rollback` wouldn't restore a specific replica
+  count either, since ArgoCD is told not to look).
+- **Drop `replicas:` from the rendered Deployment entirely** once
+  `app.autoscaling` is set, and let the HPA (or the cluster's default of 1)
+  own it unconditionally. Cleaner separation of concerns, but changes what
+  `app.replicas` *means* in `nexus.yaml` depending on whether autoscaling is
+  on — a schema field whose semantics silently change based on another
+  field is exactly the kind of implicit coupling this project has otherwise
+  avoided.
+- Either way: does `nexus status` show the HPA's *current* replica count or
+  the git-tracked *desired* one? They'd legitimately disagree by design once
+  autoscaling is live — today `status` has never had to make that
+  distinction.
+
+None of these is hard individually; picking the right one needs a plan-mode
+pass against real HPA behavior on a live cluster, not an assumption from
+reading ArgoCD's docs.
+
+## 6. Per-app namespace override (`app.namespace`)
+
+**Why it's not started, and why this one might just stay that way:** every
+namespaced resource Nexus creates lives in a namespace equal to `app.name`
+(`namespace.yaml.j2`, and hardcoded in `deployment.yaml.j2`,
+`service.yaml.j2`, `serviceaccount.yaml.j2`, `pdb.yaml.j2`, and
+`servicemonitor.yaml.j2`) — one app, one namespace, always. That's not
+laziness; it's the exact property that makes `nexus destroy` safe.
+`destroy.py`'s `_remove_namespace` deletes the entire namespace as its first
+and primary step, relying on that namespace containing *only* this app's
+resources. An `app.namespace` override that let two apps share a namespace
+would make `nexus destroy` on either one delete the other's resources too —
+a typed-name confirmation protects against the wrong *app* being destroyed,
+not against a shared namespace taking down more than the user thinks it
+will.
+
+If this gets picked up anyway (e.g. for an org that wants team-based
+namespace conventions), `destroy_steps`/`_remove_namespace` would need to
+stop deleting the namespace outright and instead label-select + delete each
+resource kind individually (`kubectl delete deployment,service,... -l
+app=<name> -n <namespace>`) — a meaningfully larger, riskier change to the
+single most destructive command in the CLI, not a one-line schema addition.
+
 ---
 
 ## Explicitly not on this list

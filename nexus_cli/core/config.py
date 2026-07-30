@@ -209,6 +209,14 @@ class AppConfig(BaseModel):
     replicas: int = Field(default=2, ge=1, le=20)
     env: list[EnvVar] = Field(default_factory=list)
     resources: Resources = Field(default_factory=Resources)
+    # ClusterIP, not the legacy demo's LoadBalancer: `nexus deploy`'s own
+    # success message tells the user to `kubectl port-forward`, which works
+    # against any Service type — the documented access path never actually
+    # needed a LoadBalancer. LoadBalancer sits <pending> forever on a bare
+    # Kind/Minikube cluster (without `minikube tunnel`) and provisions a
+    # real, billed load balancer per app on a real cloud cluster. Still
+    # available for whoever wants it — just no longer the default.
+    serviceType: Literal["ClusterIP", "NodePort", "LoadBalancer"] = "ClusterIP"
     # "Always" is the safe default for a mutable `:latest`-style tag, but it's
     # exactly what makes `status.image_pull_fix()`'s Minikube advice
     # (`minikube image load`) not work — the kubelet retries the registry
