@@ -42,6 +42,33 @@ nexus = "nexus_cli.main:app"
 [tool.hatch.version]
 path = "nexus_cli/__init__.py"
 
+# Hatchling's default sdist (no include/exclude given) is "every git-tracked
+# file" — which would ship legacy/ (32 files, explicitly read-only reference
+# material, not package content), tests/, docs_site/, and .github/ inside a
+# source distribution meant to build the nexus-gitops package. Scoped
+# explicitly instead: everything a wheel build actually needs, whether
+# building directly from this checkout or from an extracted sdist —
+# including dashboard/frontend's *source* (not dashboard/frontend/out/,
+# which is gitignored and produced by hatch_build.py, not shipped as source).
+[tool.hatch.build.targets.sdist]
+include = [
+    "/nexus_cli",
+    "/dashboard/__init__.py",
+    "/dashboard/backend",
+    "/dashboard/frontend/app",
+    "/dashboard/frontend/lib",
+    "/dashboard/frontend/package.json",
+    "/dashboard/frontend/package-lock.json",
+    "/dashboard/frontend/next.config.ts",
+    "/dashboard/frontend/next-env.d.ts",
+    "/dashboard/frontend/tsconfig.json",
+    "/dashboard/frontend/eslint.config.mjs",
+    "/hatch_build.py",
+    "/README.md",
+    "/LICENSE",
+    "/CHANGELOG.md",
+]
+
 # Builds dashboard/frontend's static export before packaging (see
 # hatch_build.py) — scoped to the wheel target only, not sdist: an sdist
 # should stay source-only and buildable without Node, the wheel is the
