@@ -47,8 +47,32 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/frontend/package-lock.json
 
-      - name: Install dependencies
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install frontend dependencies
         run: npm ci
+
+      - name: Install backend dependencies (for type generation below)
+        working-directory: .
+        run: pip install -e ".[dashboard]"
+
+      # scripts/generate_dashboard_types.py's whole point (PRD-adjacent: no
+      # spec section for it, but the same "CLI and dashboard can't silently
+      # disagree" principle everything else in dashboard/backend follows) —
+      # regenerate and fail if that changes anything, so a Pydantic model
+      # edited without regenerating types is caught here, not by a user
+      # hitting a runtime type mismatch.
+      - name: Generated dashboard types are up to date
+        working-directory: .
+        run: |
+          python3 scripts/generate_dashboard_types.py
+          git diff --exit-code dashboard/frontend/lib/api.generated.ts || {
+            echo "::error::dashboard/frontend/lib/api.generated.ts is stale — run 'python3 scripts/generate_dashboard_types.py' and commit the result."
+            exit 1
+          }
 
       - name: ESLint
         run: npx eslint .
@@ -56,10 +80,49 @@ jobs:
       - name: TypeScript
         run: npx tsc --noEmit
 
-      # Compiles the production bundle — the closest CI gets to proving the
-      # dashboard actually builds without a live backend/cluster to run against.
-      - name: Build
+      # Compiles the production bundle. NEXUS_STATIC_EXPORT=1 matches what
+      # actually ships (see next.config.ts) — building without it would only
+      # prove the dev-mode config compiles, not the one `nexus dashboard`
+      # and the packaged wheel depend on.
+      - name: Build (static export)
         run: npm run build
+        env:
+          NEXUS_STATIC_EXPORT: "1"
+
+  wheel-build:
+    name: wheel packaging (dashboard frontend bundled, no Node at install time)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
+
+      # Node is needed here (hatch_build.py shells out to npm) but not by
+      # whoever later installs this wheel — that's the whole point of this
+      # job: catch a packaging regression before it ships an empty dashboard.
+      - name: Build wheel
+        run: pip install build && python -m build --wheel
+
+      - name: Frontend static export landed in the wheel
+        run: |
+          python -c "
+          import zipfile, glob, sys
+          path = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(path).namelist()
+          required = 'dashboard/frontend/out/index.html'
+          assert required in names, f'{required} missing from {path}'
+          assert not any('node_modules' in n for n in names), 'node_modules leaked into the wheel'
+          print(f'OK: {required} present, node_modules absent, {len(names)} files total')
+          "
 
   integration:
     name: Kind e2e (deploy/status/destroy, idempotency, preflight failures, partial-failure)

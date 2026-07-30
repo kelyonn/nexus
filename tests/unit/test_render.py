@@ -79,6 +79,29 @@ def test_monitoring_false_drops_monitoring_templates(flask_demo_config: config.N
     assert "grafana-dashboard" not in rendered
 
 
+def test_metrics_path_unset_omits_servicemonitor(flask_demo_config: config.NexusConfig) -> None:
+    rendered = render.render_manifests(flask_demo_config)
+    assert "servicemonitor" not in rendered
+
+
+def test_metrics_path_set_adds_servicemonitor(flask_demo_config: config.NexusConfig) -> None:
+    flask_demo_config.app.metricsPath = "/metrics"
+    rendered = render.render_manifests(flask_demo_config)
+    assert "servicemonitor" in rendered
+
+
+def test_metrics_path_set_but_monitoring_false_omits_servicemonitor(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """A ServiceMonitor is a monitoring-stack resource — no monitoring stack
+    installed means no ServiceMonitor, regardless of metricsPath.
+    """
+    flask_demo_config.app.metricsPath = "/metrics"
+    flask_demo_config.platform.monitoring = False
+    rendered = render.render_manifests(flask_demo_config)
+    assert "servicemonitor" not in rendered
+
+
 # --- namespace.yaml.j2 ---
 
 
@@ -137,8 +160,66 @@ def test_service_matches_legacy_structure(rendered: dict[str, str]) -> None:
     assert doc["metadata"]["name"] == "nexus-app"
     assert doc["metadata"]["namespace"] == "nexus-app"
     assert doc["spec"]["selector"]["app"] == "nexus-app"
-    assert doc["spec"]["ports"] == [{"protocol": "TCP", "port": 80, "targetPort": 5050}]
+    # Named ("http") since Phase 3 (PRD §10.4): a ServiceMonitor references a
+    # Service's port by name, not number — see servicemonitor.yaml.j2.
+    assert doc["spec"]["ports"] == [
+        {"name": "http", "protocol": "TCP", "port": 80, "targetPort": 5050}
+    ]
     assert doc["spec"]["type"] == "LoadBalancer"  # legacy: LoadBalancer
+
+
+def test_service_adds_no_extra_port_when_metrics_share_app_port(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.metricsPath = "/metrics"  # metricsPort unset -> defaults to app.port
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["service"])
+    assert len(doc["spec"]["ports"]) == 1
+    assert doc["spec"]["ports"][0]["name"] == "http"
+
+
+def test_service_adds_metrics_port_when_it_differs_from_app_port(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.metricsPath = "/metrics"
+    flask_demo_config.app.metricsPort = 9100
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["service"])
+    assert doc["spec"]["ports"] == [
+        {"name": "http", "protocol": "TCP", "port": 80, "targetPort": 5050},
+        {"name": "metrics", "protocol": "TCP", "port": 9100, "targetPort": 9100},
+    ]
+
+
+# --- servicemonitor.yaml.j2 ---
+
+
+def test_servicemonitor_carries_release_label_prometheus_requires(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """kube-prometheus-stack's Prometheus only scrapes ServiceMonitors
+    matching its serviceMonitorSelector — confirmed against a live cluster's
+    actual Prometheus CR (`release: kube-prom-stack`), not assumed.
+    """
+    flask_demo_config.app.metricsPath = "/metrics"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["servicemonitor"])
+    assert doc["apiVersion"] == "monitoring.coreos.com/v1"
+    assert doc["kind"] == "ServiceMonitor"
+    assert doc["metadata"]["namespace"] == "nexus-app"
+    assert doc["metadata"]["labels"]["release"] == "kube-prom-stack"
+    assert doc["spec"]["selector"]["matchLabels"]["app"] == "nexus-app"
+    assert doc["spec"]["endpoints"] == [{"port": "http", "path": "/metrics", "interval": "15s"}]
+
+
+def test_servicemonitor_references_metrics_port_when_separate(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.metricsPath = "/metrics"
+    flask_demo_config.app.metricsPort = 9100
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["servicemonitor"])
+    assert doc["spec"]["endpoints"][0]["port"] == "metrics"
 
 
 # --- argocd-app.yaml.j2 (legacy/application.yaml) ---
@@ -223,6 +304,44 @@ def test_grafana_dashboard_matches_legacy_structure(rendered: dict[str, str]) ->
     assert restarts["panels"][0]["targets"][0]["legendFormat"] == "{{pod}}"
 
 
+def test_grafana_dashboard_adds_http_panels_when_metrics_path_set(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """PRD §10.4's three app-level panels. PromQL uses prometheus-flask-
+    exporter's real metric names (flask_http_request_total,
+    flask_http_request_duration_seconds_bucket) — verified empirically
+    against a running instance of that exporter, not assumed; it does NOT
+    use the generic http_requests_total naming other client libraries use.
+    """
+    import json
+
+    flask_demo_config.app.metricsPath = "/metrics"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["grafana-dashboard"])
+
+    assert {"http-request-rate.json", "http-error-rate.json", "http-latency.json"} <= set(
+        doc["data"]
+    )
+
+    requests = json.loads(doc["data"]["http-request-rate.json"])
+    assert requests["uid"] == "nexus-app-requests"
+    expr = requests["panels"][0]["targets"][0]["expr"]
+    assert "flask_http_request_total" in expr
+    assert 'namespace="nexus-app"' in expr
+
+    errors = json.loads(doc["data"]["http-error-rate.json"])
+    assert errors["uid"] == "nexus-app-errors"
+    expr = errors["panels"][0]["targets"][0]["expr"]
+    assert "flask_http_request_total" in expr
+    assert 'status=~"5.."' in expr
+
+    latency = json.loads(doc["data"]["http-latency.json"])
+    assert latency["uid"] == "nexus-app-latency"
+    expr = latency["panels"][0]["targets"][0]["expr"]
+    assert "histogram_quantile(0.95" in expr
+    assert "flask_http_request_duration_seconds_bucket" in expr
+
+
 # --- podchaos.yaml.j2 (legacy/chaos/pod-kill.yaml + pod-kill-schedule.yaml) ---
 
 
@@ -251,6 +370,38 @@ def test_podchaos_matches_legacy_structure_except_blast_radius(
 
 
 # --- rendering with a different app.name produces a fully consistent set ---
+
+
+def test_image_pull_policy_propagates_to_deployment(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.imagePullPolicy = "IfNotPresent"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert container["imagePullPolicy"] == "IfNotPresent"
+
+
+def test_registry_unset_omits_image_pull_secrets(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    assert "imagePullSecrets" not in doc["spec"]["template"]["spec"]
+
+
+def test_registry_set_adds_image_pull_secrets_referencing_derived_name(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.registry = config.RegistryConfig(
+        server="ghcr.io", usernameEnv="REG_USER", passwordEnv="REG_PASS"
+    )
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    assert doc["spec"]["template"]["spec"]["imagePullSecrets"] == [
+        {"name": flask_demo_config.app.registry_secret_name}
+    ]
+    assert flask_demo_config.app.registry_secret_name == "nexus-app-registry"
 
 
 def test_different_app_name_is_consistent_across_all_templates(

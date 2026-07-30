@@ -1,15 +1,17 @@
 """``nexus dashboard`` — launch the local browser control panel (PRD §10, §13).
 
-Starts the FastAPI backend, the Next.js frontend, and (best-effort) a
-`kubectl port-forward` to Grafana as subprocesses, waits for the backend to
-be ready, then opens the browser with a fresh per-session token in the URL.
-Ctrl+C tears all of them down cleanly.
+Starts the FastAPI backend (which serves the frontend's static export
+itself, see core/dashboard.py's docstring) and (best-effort) `kubectl
+port-forward`s to Grafana and Prometheus as subprocesses, waits for the
+backend to be ready, then opens the browser with a fresh per-session token
+in the URL. Ctrl+C tears all of them down cleanly.
 """
 
 from __future__ import annotations
 
 import subprocess
 import webbrowser
+from collections.abc import Callable
 
 import typer
 
@@ -17,12 +19,32 @@ from nexus_cli.core import dashboard as core_dashboard
 from nexus_cli.core import kubectl, output
 
 
+def _start_optional_port_forward(
+    procs: list[subprocess.Popen[bytes]],
+    *,
+    label: str,
+    start_fn: Callable[[], subprocess.Popen[bytes] | None],
+    local_port: int,
+) -> None:
+    """Best-effort port-forward: on success, track it for shutdown() and tell
+    the user; on failure (component not installed), say so and move on —
+    every consumer of these (Metrics panel, sparklines) already degrades
+    gracefully when there's nothing listening.
+    """
+    proc = start_fn()
+    if proc is not None:
+        procs.append(proc)
+        output.step(f"Port-forwarding {label} -> http://localhost:{local_port}")
+    else:
+        output.step(f"No {label} found on the cluster — related panels will show as unavailable.")
+
+
 def dashboard() -> None:
-    """Launch the dashboard backend + frontend and open it in your browser."""
+    """Launch the local dashboard and open it in your browser."""
     try:
         core_dashboard.check_dashboard_deps_installed()
         core_dashboard.check_backend_source_present()
-        core_dashboard.check_frontend_ready()
+        core_dashboard.check_frontend_built()
         if not kubectl.cluster_reachable():
             raise output.NexusError(
                 what="No reachable Kubernetes cluster.",
@@ -38,14 +60,19 @@ def dashboard() -> None:
     output.step("Starting dashboard backend...")
     backend_proc = core_dashboard.start_backend(token)
     procs.append(backend_proc)
-    procs.append(core_dashboard.start_frontend())
 
-    grafana_proc = core_dashboard.start_grafana_port_forward()
-    if grafana_proc is not None:
-        procs.append(grafana_proc)
-        output.step(f"Port-forwarding Grafana -> http://localhost:{core_dashboard.GRAFANA_LOCAL_PORT}")
-    else:
-        output.step("No Grafana found on the cluster — its panel will show setup instructions.")
+    _start_optional_port_forward(
+        procs,
+        label="Grafana",
+        start_fn=core_dashboard.start_grafana_port_forward,
+        local_port=core_dashboard.GRAFANA_LOCAL_PORT,
+    )
+    _start_optional_port_forward(
+        procs,
+        label="Prometheus",
+        start_fn=core_dashboard.start_prometheus_port_forward,
+        local_port=core_dashboard.PROMETHEUS_LOCAL_PORT,
+    )
 
     try:
         core_dashboard.wait_for_backend_ready()

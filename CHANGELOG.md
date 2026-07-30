@@ -73,6 +73,94 @@ All notable changes to Nexus are documented here. Format based on
   values so the dashboard's iframe panels aren't silently blocked by
   Grafana's default `X-Frame-Options: DENY` (PRD §15's mitigation, not
   previously implemented).
+- Dashboard: pod age (App Detail, from `creationTimestamp`), CPU/memory
+  sparklines fed by a new `GET /apps/{name}/metrics` endpoint that proxies
+  Prometheus `query_range` (`core/dashboard.py` gained a generic
+  `start_port_forward()`, reused for both Grafana and Prometheus), and real
+  commit subjects in the GitOps Log (`git.commit_subject()`) instead of a
+  bare SHA (PRD §10.2/§10.3).
+- App-level HTTP metrics (PRD §10.4): optional `app.metricsPath`/
+  `metricsPort` in `nexus.yaml` render a `ServiceMonitor` so
+  kube-prometheus-stack scrapes the app directly, plus three new Grafana
+  dashboards (request rate, error rate, P95 latency). `examples/flask-demo`
+  is instrumented with `prometheus-flask-exporter` as the reference
+  implementation (its checked-in `nexus.yaml` doesn't set `metricsPath`
+  itself, since the pre-built Docker Hub image it deploys predates the
+  instrumentation — see the comment there). The dashboard shows these panels
+  only when the backend confirms a `ServiceMonitor` actually exists for that
+  app.
+- `nexus dashboard` no longer needs Node/npm on the machine running it:
+  `dashboard/frontend` now builds to a static export (`next build` with
+  `output: "export"`), and the FastAPI backend serves it directly alongside
+  its own `/api/*` routes — one process instead of two. A hatchling build
+  hook (`hatch_build.py`) builds the frontend into the wheel automatically;
+  Node is now a maintainer-time requirement for building a release, not a
+  user-time one for running `pip install`. `/apps/[name]` became `/apps?name=`
+  (a static export can't serve arbitrary dynamic segments) with no change to
+  what the page shows.
+- Docs site (`docs_site/`, MkDocs Material, deployed to GitHub Pages via
+  `.github/workflows/docs.yml`): install/quickstart, a command reference
+  generated from real `--help` output, the full `nexus.yaml` schema, an
+  architecture overview, and a troubleshooting page seeded from real bugs
+  hit during development (ImagePullBackOff on Minikube, the ArgoCD health
+  quirk, the branch-mismatch soft-skip, the Chaos Mesh webhook race) rather
+  than a hypothetical FAQ. Cloud quick-starts for EKS/GKE/AKS are included
+  but explicitly labeled untested — everything else on the site has been
+  live-verified against Minikube/Kind. `docs_site/` is the site's source;
+  this repo's own `docs/` remains a separate, gitignored, local-only
+  directory and is not published. `CONTRIBUTING.md`, issue templates
+  (bug report / feature request), and a PR template were also added.
+- `docs_site/multi-environment.md` documents running staging/prod from
+  separate `nexus.yaml` files via `--config` — what already worked, just
+  undocumented, plus the two fields (`platform.branch`, `app.name`) that
+  actually keep two environments from colliding. `FUTURE-SCOPE.md` tracks
+  bigger deferred ideas (secret management, a real `environments:` schema,
+  dashboard log streaming) with the design questions each needs answered
+  first, following an external review of the project.
+- Dashboard frontend types (`dashboard/frontend/lib/api.generated.ts`) are
+  now generated from the backend's Pydantic response models
+  (`scripts/generate_dashboard_types.py`, via Pydantic's
+  `models_json_schema` + `json-schema-to-typescript`) instead of hand-kept
+  in sync — a real, repeated source of bugs while building the dashboard
+  (`has_http_metrics`, `created_at`, and `subject` each needed adding by
+  hand to both sides). CI regenerates and fails if the committed output is
+  stale (`.github/workflows/ci.yml`'s `dashboard-frontend` job).
+- `app.registry` in `nexus.yaml`: closes the most common `ImagePullBackOff`
+  cause — a private registry (ECR, GCR, a private GHCR/Docker Hub repo)
+  Kubernetes has no credentials for. Takes environment variable *names*
+  (`usernameEnv`/`passwordEnv`), never raw credentials — `nexus.yaml` gets
+  committed to git, so a real credential there would recreate the exact
+  problem GitOps exists to avoid. `nexus deploy` reads the actual
+  credentials from those env vars at deploy time and imperatively
+  creates/updates a `kubernetes.io/dockerconfigjson` Secret via `kubectl`
+  (never rendered into the committed `k8s/` directory), written through a
+  short-lived 0600 temp file rather than a `--docker-password=...` CLI
+  argument (avoids leaking it via `ps aux` for the life of the process).
+  `deployment.yaml.j2` references it via `imagePullSecrets` when set.
+  `nexus doctor` checks credential env vars are present (never prints their
+  values). Live-verified against the real cluster: missing credentials
+  abort `nexus deploy` clearly (and are caught proactively by `nexus
+  doctor`), the created Secret's decoded content is exactly correct,
+  the Deployment correctly references it, rotating credentials and
+  redeploying updates the Secret in place (idempotent, no duplication), and
+  `nexus destroy` cleans it up (implicitly, via namespace deletion).
+- `nexus destroy --dry-run`: prints exactly the same resource list the real
+  run already showed before its confirmation prompt (now also including
+  the imagePullSecret when `app.registry` is set — a gap in that listing
+  found while touching it), then stops before prompting. A second, cheaper
+  safety net on top of the existing typed-name confirmation for the most
+  destructive command in the CLI.
+- `nexus logs --follow` / `-f`: streams every matching pod's logs live,
+  concurrently, prefixed by pod name like the existing snapshot output —
+  the same `kubectl logs -f` mental model `nexus watch` already uses for
+  pod events. One thread per pod (`kubernetes.watch.Watch()` genuinely
+  supports following a log stream, not just watching list events — verified
+  against the installed SDK's source, not assumed). Live-verified against a
+  real cluster, including Ctrl+C actually stopping it: an initial test via a
+  backgrounded shell job falsely suggested a hang, which turned out to be
+  the shell itself ignoring `SIGINT` for background jobs, not this code —
+  re-tested with a wrapper that resets `SIGINT` to its default disposition
+  first, matching a real terminal, and it stops immediately as intended.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
@@ -88,6 +176,20 @@ All notable changes to Nexus are documented here. Format based on
   rollback target itself is validated, so a bad `--to-commit` sha or "nothing
   to roll back" fails immediately instead of asking the user to confirm a
   risky action first.
+- `deploy`/`upgrade`/`rollback` no longer time out and report failure on a
+  fully successful rollout: on the ArgoCD version currently installed,
+  `health` can stay `Progressing` indefinitely even once Kubernetes reports
+  the Deployment fully available. `argocd.wait_for_healthy()` now
+  cross-checks ground truth via replica counts when `sync == Synced` and
+  `health == Progressing`, and the three commands print an honest note when
+  this override fired. Chart versions (`argo`/`prometheus`/`chaos`) are also
+  now pinned in `deploy.py` per PRD §15's stated mitigation.
+- `imagePullPolicy: Always` was hardcoded, which made `status.image_pull_fix()`'s
+  own documented Minikube fix (`minikube image load` + redeploy) impossible —
+  the kubelet would just try the registry again and fail the same way. Added
+  `app.imagePullPolicy` (`Always | IfNotPresent | Never`, default `Always`) to
+  `nexus.yaml`, templated it, and updated the fix message to mention setting
+  `IfNotPresent` alongside the load command.
 
 ### Changed
 - PyPI package renamed `nexus-platform` → `nexus-gitops`: `nexus-platform`

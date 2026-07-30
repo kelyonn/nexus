@@ -44,9 +44,7 @@ def upgrade(
         output.print_error(err)
         raise typer.Exit(code=1) from err
 
-    output.step("")
-    output.step(f"Nexus Upgrade — {cfg.app.name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Upgrade — {cfg.app.name}")
     output.step(f"Current image: {cfg.app.image}")
     output.step(f"New image:     {image}")
 
@@ -80,6 +78,7 @@ def upgrade(
     # fail first (PRD says warn-and-confirm on mismatch, not block a preview
     # or a doomed command with a premature question).
     if not pre.branch_matches:
+        output.step("")
         output.warn(
             f"Current branch ('{pre.branch}') does not match platform.branch "
             f"('{cfg.platform.branch}')."
@@ -105,12 +104,18 @@ def upgrade(
     output.step("Syncing via ArgoCD...")
     argocd.trigger_sync(cfg.app.name)
     try:
-        argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
+        result = argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
     except output.NexusError as err:
         output.print_error(err)
         output.step("")
         output.step("The image change was committed and pushed — check `nexus status`.")
         raise typer.Exit(code=1) from err
+    if result.health_status != "Healthy":
+        output.warn(
+            f"ArgoCD itself still reports health={result.health_status} (a known "
+            "ArgoCD quirk on some versions); the Deployment's own replica counts "
+            "confirm it's actually ready."
+        )
 
     output.step("")
     output.step("Pods:")

@@ -14,10 +14,17 @@ from nexus_cli.core import status
 
 
 def _pod(
-    name: str, *, phase: str = "Running", container_statuses: list[dict] | None = None
+    name: str,
+    *,
+    phase: str = "Running",
+    container_statuses: list[dict] | None = None,
+    created_at: str | None = None,
 ) -> dict:
+    metadata = {"name": name}
+    if created_at is not None:
+        metadata["creationTimestamp"] = created_at
     return {
-        "metadata": {"name": name},
+        "metadata": metadata,
         "status": {
             "phase": phase,
             "containerStatuses": container_statuses or [],
@@ -100,6 +107,18 @@ def test_list_pods_defaults_phase_to_unknown(monkeypatch: pytest.MonkeyPatch) ->
     assert status.list_pods("my-app")[0].phase == "Unknown"
 
 
+def test_list_pods_includes_creation_timestamp(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"items": [_pod("my-app-abc", created_at="2026-01-01T00:00:00Z")]}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.list_pods("my-app")[0].created_at == "2026-01-01T00:00:00Z"
+
+
+def test_list_pods_created_at_none_when_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    doc = {"items": [_pod("my-app-abc")]}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.list_pods("my-app")[0].created_at is None
+
+
 def test_replica_counts_reads_spec_and_status(monkeypatch: pytest.MonkeyPatch) -> None:
     doc = {"spec": {"replicas": 3}, "status": {"availableReplicas": 2}}
     monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
@@ -116,6 +135,28 @@ def test_replica_counts_defaults_to_zero_when_fields_absent(
 def test_image_pull_fix_minikube(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
     assert "minikube image load" in status.image_pull_fix()
+
+
+def test_image_pull_fix_minikube_always_policy_warns_load_wont_help_alone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under the default `Always`, the kubelet re-checks the registry
+    regardless of what's locally loaded — the fix must say so, not just
+    suggest a load that silently won't work.
+    """
+    monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
+    fix = status.image_pull_fix("Always")
+    assert "minikube image load" in fix
+    assert "IfNotPresent" in fix
+
+
+def test_image_pull_fix_minikube_if_not_present_policy_load_alone_suffices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
+    fix = status.image_pull_fix("IfNotPresent")
+    assert "minikube image load" in fix
+    assert "IfNotPresent" not in fix  # already set — no need to tell the user to change it
 
 
 def test_image_pull_fix_other_context(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -41,6 +41,12 @@ def template_names(config: NexusConfig) -> list[str]:
     names = list(_ALWAYS_ON)
     if config.platform.monitoring:
         names += _MONITORING
+        # Opt-in on top of platform.monitoring: a ServiceMonitor only makes
+        # sense if the app actually exposes something to scrape (PRD §10.4 —
+        # see AppConfig.metricsPath's docstring for why this can't just
+        # default on for every app).
+        if config.app.metricsPath:
+            names.append("servicemonitor")
     if config.platform.chaos:
         names += _CHAOS
     return names

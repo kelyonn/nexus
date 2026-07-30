@@ -39,12 +39,18 @@ def _report_rollout(cfg: NexusConfig) -> None:
     output.step("Syncing via ArgoCD...")
     argocd.trigger_sync(cfg.app.name)
     try:
-        argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
+        result = argocd.wait_for_healthy(cfg.app.name, timeout=SYNC_WAIT_TIMEOUT)
     except output.NexusError as err:
         output.print_error(err)
         output.step("")
         output.step("The rollback was committed and pushed — check `nexus status`.")
         raise typer.Exit(code=1) from err
+    if result.health_status != "Healthy":
+        output.warn(
+            f"ArgoCD itself still reports health={result.health_status} (a known "
+            "ArgoCD quirk on some versions); the Deployment's own replica counts "
+            "confirm it's actually ready."
+        )
 
     output.step("")
     output.step("Pods:")
@@ -75,6 +81,7 @@ def _check_preconditions(cfg: NexusConfig) -> gitops.GitPreconditions:
 def _confirm_branch_mismatch(pre: gitops.GitPreconditions, cfg: NexusConfig, *, yes: bool) -> None:
     if pre.branch_matches:
         return
+    output.step("")
     output.warn(
         f"Current branch ('{pre.branch}') does not match platform.branch "
         f"('{cfg.platform.branch}')."
@@ -148,9 +155,7 @@ def rollback(
             output.print_error(no_parent_image)
             raise typer.Exit(code=1)
 
-    output.step("")
-    output.step(f"Nexus Rollback — {cfg.app.name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Rollback — {cfg.app.name}")
     output.step(f"Current image: {cfg.app.image}")
     output.step(f"Target image:  {target_image}")
 

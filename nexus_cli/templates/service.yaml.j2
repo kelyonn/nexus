@@ -10,7 +10,14 @@ spec:
   selector:
     app: {{ app.name }}
   ports:
-    - protocol: TCP
+    - name: http
+      protocol: TCP
       port: 80
       targetPort: {{ app.port }}
+{% if app.metricsPath and app.effective_metrics_port != app.port %}
+    - name: metrics
+      protocol: TCP
+      port: {{ app.effective_metrics_port }}
+      targetPort: {{ app.effective_metrics_port }}
+{% endif %}
   type: LoadBalancer

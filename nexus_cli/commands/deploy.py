@@ -41,11 +41,14 @@ That same test surfaced a separate, unrelated finding worth knowing: on
 ArgoCD v3.4.5, `health` can stay `Progressing` for a Deployment that
 Kubernetes itself reports as fully ready (`Available: True`, N/N ready) —
 observed stable for 90+ seconds and unchanged by a manual hard-refresh. This
-looks like an upstream ArgoCD health-check quirk on this resource/version,
-not something `sync_manifests_to_git` or this command controls; `nexus
-status`/`nexus deploy` correctly report whatever ArgoCD itself says, so this
-can surface to users as "Synced" but not yet "Healthy" even when the app is
-actually fine — worth a `nexus status` cross-check if `deploy` times out here.
+looks like an upstream ArgoCD health-check quirk on this resource/version, not
+something `sync_manifests_to_git` or this command controls. `argocd.
+wait_for_healthy` now cross-checks the Deployment's own replica counts when it
+sees this exact combination (Synced + Progressing) and accepts it as ready
+rather than waiting the full timeout and reporting a false failure — see that
+function's docstring. Chart versions are pinned below (PRD §15) specifically
+so this quirk stays reproducible rather than silently shifting under a future
+`helm repo update`.
 """
 
 from __future__ import annotations
@@ -56,19 +59,27 @@ from pathlib import Path
 
 import typer
 
-from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, render
+from nexus_cli.core import argocd, git, helm, kubectl, output, preflight, registry, render
 from nexus_cli.core import config as nexus_config
 from nexus_cli.core.config import NexusConfig
 
+# Chart versions are pinned to what's actually been live-verified throughout
+# this project (PRD §15: "Helm/ArgoCD version skew breaks install" ->
+# "Mitigation: pin tested versions"). ArgoCD's app_version (v3.4.5) is the
+# exact version with the health:Progressing quirk `argocd.wait_for_healthy`
+# works around — pinning keeps that quirk reproducible instead of letting a
+# routine `helm repo update` silently change which bugs are in play.
 ARGO_RELEASE = "argocd"
 ARGO_NAMESPACE = "argocd"
 ARGO_REPO = ("argo", "https://argoproj.github.io/argo-helm")
 ARGO_CHART = "argo/argo-cd"
+ARGO_CHART_VERSION = "10.2.1"  # app_version v3.4.5
 
 PROM_RELEASE = "kube-prom-stack"
 PROM_NAMESPACE = "monitoring"
 PROM_REPO = ("prometheus-community", "https://prometheus-community.github.io/helm-charts")
 PROM_CHART = "prometheus-community/kube-prometheus-stack"
+PROM_CHART_VERSION = "87.21.0"  # app_version v0.92.1
 
 # Grafana sets `X-Frame-Options: DENY` by default, which silently blocks the
 # dashboard's embedded metric panels (PRD §10.4). These two settings are what
@@ -85,6 +96,7 @@ CHAOS_RELEASE = "chaos-mesh"
 CHAOS_NAMESPACE = "chaos-mesh"
 CHAOS_REPO = ("chaos-mesh", "https://charts.chaos-mesh.org")
 CHAOS_CHART = "chaos-mesh/chaos-mesh"
+CHAOS_CHART_VERSION = "2.8.3"  # app_version 2.8.3
 
 SYNC_WAIT_TIMEOUT = 120
 MANIFESTS_DIR = "k8s"  # must match argocd-app.yaml.j2's spec.source.path
@@ -92,19 +104,27 @@ MANIFESTS_DIR = "k8s"  # must match argocd-app.yaml.j2's spec.source.path
 
 def _install_argocd() -> None:
     helm.repo_add(*ARGO_REPO)
-    helm.upgrade_install(ARGO_RELEASE, ARGO_CHART, namespace=ARGO_NAMESPACE)
+    helm.upgrade_install(
+        ARGO_RELEASE, ARGO_CHART, namespace=ARGO_NAMESPACE, chart_version=ARGO_CHART_VERSION
+    )
 
 
 def _install_monitoring() -> None:
     helm.repo_add(*PROM_REPO)
     helm.upgrade_install(
-        PROM_RELEASE, PROM_CHART, namespace=PROM_NAMESPACE, values=GRAFANA_EMBED_VALUES
+        PROM_RELEASE,
+        PROM_CHART,
+        namespace=PROM_NAMESPACE,
+        values=GRAFANA_EMBED_VALUES,
+        chart_version=PROM_CHART_VERSION,
     )
 
 
 def _install_chaos() -> None:
     helm.repo_add(*CHAOS_REPO)
-    helm.upgrade_install(CHAOS_RELEASE, CHAOS_CHART, namespace=CHAOS_NAMESPACE)
+    helm.upgrade_install(
+        CHAOS_RELEASE, CHAOS_CHART, namespace=CHAOS_NAMESPACE, chart_version=CHAOS_CHART_VERSION
+    )
 
 
 _INSTALL_FNS: dict[str, Callable[[], None]] = {
@@ -133,6 +153,16 @@ def apply_app_manifests(cfg: NexusConfig) -> None:
         if name == "argocd-app":
             continue
         kubectl.apply_manifest(text)
+
+
+def apply_registry_secret(cfg: NexusConfig) -> None:
+    """Create/update the app's imagePullSecret, if ``app.registry`` is set.
+
+    Must run *after* ``apply_app_manifests`` — the Secret is namespaced to
+    the app's own namespace, which that step is what creates. A no-op when
+    ``app.registry`` is unset (most apps).
+    """
+    registry.apply_pull_secret(cfg.app)
 
 
 def sync_manifests_to_git(cfg: NexusConfig) -> str:
@@ -205,7 +235,7 @@ def _run_step(
     docstring for why) only warn and let deploy continue. A step may return a
     short outcome string, appended to its "done" line.
     """
-    output.step(f"[{index}/{total}] {label}...")
+    output.info(f"[{index}/{total}] {label}...")
     start = time.monotonic()
     try:
         result = fn()
@@ -219,10 +249,12 @@ def _run_step(
             raise typer.Exit(code=1) from err
         output.warn(f"    skipped ({elapsed:.0f}s) — ArgoCD sync stays pending until this is fixed")
         output.print_error(err)
+        output.step("")
         return
     elapsed = time.monotonic() - start
     suffix = f" — {result}" if isinstance(result, str) else ""
     output.success(f"    done ({elapsed:.0f}s){suffix}")
+    output.step("")
 
 
 def deploy(
@@ -241,20 +273,18 @@ def deploy(
 
     name = cfg.app.name
 
-    output.step("")
-    output.step(f"Nexus Deploy — {name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Deploy — {name}")
 
     for c in preflight.run(require_helm=True):
-        glyph = "✓" if c.passed else "✗"
-        output.step(f"{glyph} {c.detail}")
+        output.check(c.passed, c.detail)
 
+    output.step("")
     deps = dependency_status(cfg)
     for label, _namespace, installed in deps:
         if installed:
-            output.step(f"✓ {label} present → skip")
+            output.check(True, f"{label} present → skip")
         else:
-            output.step(f"✗ {label} not installed → will install")
+            output.check(False, f"{label} not installed → will install")
 
     # (label, fn, is_critical) — the git-sync step is the one non-critical entry.
     plan: list[tuple[str, Callable[[], object], bool]] = []
@@ -264,6 +294,14 @@ def deploy(
     plan.append(
         (f"Apply app manifests → namespace: {name}", lambda: apply_app_manifests(cfg), True)
     )
+    if cfg.app.registry is not None:
+        plan.append(
+            (
+                f"Create imagePullSecret → {cfg.app.registry_secret_name}",
+                lambda: apply_registry_secret(cfg),
+                True,
+            )
+        )
     plan.append(
         (
             f"Commit manifests to Git → {MANIFESTS_DIR}/",
@@ -295,16 +333,23 @@ def deploy(
         short_label = label.split(" →")[0]
         _run_step(i, total, short_label, fn, critical=critical)
 
-    output.step("")
-    output.step("Waiting for sync...")
+    output.info("Waiting for sync...")
     try:
-        argocd.wait_for_healthy(name, timeout=SYNC_WAIT_TIMEOUT)
+        result = argocd.wait_for_healthy(name, timeout=SYNC_WAIT_TIMEOUT)
     except output.NexusError as err:
         output.print_error(err)
         output.step("")
         output.step("Your app's manifests were applied — check with `nexus status`.")
         raise typer.Exit(code=1) from err
-    output.success("Synced + Healthy")
+    if result.health_status == "Healthy":
+        output.success("Synced + Healthy")
+    else:
+        output.success("Synced — Deployment fully available")
+        output.warn(
+            f"ArgoCD itself still reports health={result.health_status} (a known "
+            "ArgoCD quirk on some versions); the Deployment's own replica counts "
+            "confirm it's actually ready."
+        )
 
     output.step("")
     output.step("-" * 43)

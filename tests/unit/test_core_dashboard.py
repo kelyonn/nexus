@@ -72,33 +72,28 @@ def test_check_backend_source_present_raises_with_clone_fix(
     assert "git clone" in exc_info.value.fix.lower() or "clone" in exc_info.value.fix.lower()
 
 
-# --- check_frontend_ready ---
+# --- check_frontend_built ---
 
 
-def test_check_frontend_ready_raises_when_npm_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: None)
-    with pytest.raises(NexusError, match="npm"):
-        dashboard.check_frontend_ready()
-
-
-def test_check_frontend_ready_raises_when_node_modules_missing(
+def test_check_frontend_built_raises_when_out_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: "/usr/bin/npm")
     monkeypatch.setattr(dashboard, "frontend_dir", lambda: tmp_path / "frontend")
     with pytest.raises(NexusError) as exc_info:
-        dashboard.check_frontend_ready()
-    assert "npm install" in exc_info.value.fix
+        dashboard.check_frontend_built()
+    assert "isn't built" in exc_info.value.what
+    assert "npm run build" in exc_info.value.fix
 
 
-def test_check_frontend_ready_passes_when_node_modules_present(
+def test_check_frontend_built_passes_when_out_index_present(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     frontend = tmp_path / "frontend"
-    (frontend / "node_modules").mkdir(parents=True)
-    monkeypatch.setattr(dashboard.shutil, "which", lambda name: "/usr/bin/npm")
+    out = frontend / "out"
+    out.mkdir(parents=True)
+    (out / "index.html").write_text("<html></html>")
     monkeypatch.setattr(dashboard, "frontend_dir", lambda: frontend)
-    dashboard.check_frontend_ready()  # must not raise
+    dashboard.check_frontend_built()  # must not raise
 
 
 # --- generate_token / dashboard_url ---
@@ -110,12 +105,12 @@ def test_generate_token_is_reasonably_long_and_unique() -> None:
     assert len(a) > 20
 
 
-def test_dashboard_url_includes_token_and_frontend_port() -> None:
+def test_dashboard_url_includes_token_and_backend_port() -> None:
     url = dashboard.dashboard_url("abc123")
-    assert url == f"http://localhost:{dashboard.FRONTEND_PORT}/?token=abc123"
+    assert url == f"http://localhost:{dashboard.BACKEND_PORT}/?token=abc123"
 
 
-# --- start_backend / start_frontend ---
+# --- start_backend ---
 
 
 def test_start_backend_passes_token_via_env_and_uses_own_session(
@@ -138,21 +133,24 @@ def test_start_backend_passes_token_via_env_and_uses_own_session(
     assert captured["cwd"] == str(dashboard.repo_root())
 
 
-def test_start_frontend_runs_npm_dev_in_frontend_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_start_backend_passes_launch_cwd_for_commit_message_lookups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The backend's own process cwd is fixed to repo_root() (it needs to
+    import dashboard.backend.main), so without this it has no way to find
+    the app's repo for GitOps Log commit-message lookups.
+    """
     captured: dict[str, object] = {}
 
     def fake_popen(args: list[str], **kwargs: object) -> str:
-        captured["args"] = args
         captured.update(kwargs)
         return "fake-proc"
 
     monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
-    result = dashboard.start_frontend()
+    monkeypatch.setattr(dashboard.os, "getcwd", lambda: str(tmp_path))
+    dashboard.start_backend("my-token")
 
-    assert result == "fake-proc"
-    assert captured["args"] == ["npm", "run", "dev"]
-    assert captured["cwd"] == str(dashboard.frontend_dir())
-    assert captured["start_new_session"] is True
+    assert captured["env"][dashboard.APP_REPO_DIR_ENV_VAR] == str(tmp_path)
 
 
 # --- grafana_available / start_grafana_port_forward ---
@@ -174,14 +172,14 @@ def test_grafana_available_false_when_service_missing(monkeypatch: pytest.Monkey
 def test_start_grafana_port_forward_returns_none_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(dashboard, "grafana_available", lambda: False)
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: False)
     assert dashboard.start_grafana_port_forward() is None
 
 
 def test_start_grafana_port_forward_launches_kubectl_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(dashboard, "grafana_available", lambda: True)
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
     captured: dict[str, object] = {}
 
     def fake_popen(args: list[str], **kwargs: object) -> str:
@@ -202,6 +200,97 @@ def test_start_grafana_port_forward_launches_kubectl_when_available(
         "monitoring",
     ]
     assert captured["start_new_session"] is True
+
+
+# --- service_available / start_port_forward (generic) ---
+
+
+def test_service_available_true_when_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"kind": "Service"})
+    assert dashboard.service_available("some-svc", "some-ns") is True
+
+
+def test_service_available_false_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what='services "some-svc" not found')
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.service_available("some-svc", "some-ns") is False
+
+
+def test_start_port_forward_returns_none_when_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: False)
+    assert dashboard.start_port_forward("some-svc", "some-ns", 1234, 5678) is None
+
+
+def test_start_port_forward_launches_kubectl_with_given_ports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured["args"] = args
+        captured.update(kwargs)
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    result = dashboard.start_port_forward("some-svc", "some-ns", 1234, 5678)
+
+    assert result == "fake-proc"
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/some-svc",
+        "1234:5678",
+        "-n",
+        "some-ns",
+    ]
+    assert captured["start_new_session"] is True
+
+
+# --- prometheus_available / start_prometheus_port_forward ---
+
+
+def test_prometheus_available_true_when_service_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"kind": "Service"})
+    assert dashboard.prometheus_available() is True
+
+
+def test_prometheus_available_false_when_service_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what='services "kube-prom-stack-kube-prome-prometheus" not found')
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.prometheus_available() is False
+
+
+def test_start_prometheus_port_forward_launches_kubectl_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard, "service_available", lambda service, namespace: True)
+    captured: dict[str, object] = {}
+
+    def fake_popen(args: list[str], **kwargs: object) -> str:
+        captured["args"] = args
+        return "fake-proc"
+
+    monkeypatch.setattr(dashboard.subprocess, "Popen", fake_popen)
+    result = dashboard.start_prometheus_port_forward()
+
+    assert result == "fake-proc"
+    assert captured["args"] == [
+        "kubectl",
+        "port-forward",
+        "svc/kube-prom-stack-kube-prome-prometheus",
+        "9090:9090",
+        "-n",
+        "monitoring",
+    ]
 
 
 # --- wait_for_backend_ready ---

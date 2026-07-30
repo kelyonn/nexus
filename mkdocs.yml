@@ -1,0 +1,56 @@
+site_name: Nexus
+site_description: GitOps platform CLI — production-grade Kubernetes for any app, from one nexus.yaml.
+site_url: https://kelyonn.github.io/nexus/
+repo_url: https://github.com/kelyonn/nexus
+repo_name: kelyonn/nexus
+edit_uri: edit/main/docs_site/
+
+# Source lives in docs_site/, not docs/ — this repo's docs/ is a local,
+# gitignored working directory (PRD/implementation-plan context), unrelated
+# to this published site. Don't move this content there.
+docs_dir: docs_site
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+    - content.action.edit
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Install & quickstart: install.md
+  - Command reference: commands.md
+  - nexus.yaml schema: schema.md
+  - Architecture: architecture.md
+  - Multiple environments: multi-environment.md
+  - Troubleshooting: troubleshooting.md
+  - Cloud quick-starts:
+      - Overview: cloud/index.md
+      - EKS: cloud/eks.md
+      - GKE: cloud/gke.md
+      - AKS: cloud/aks.md

@@ -168,6 +168,91 @@ def test_doctor_reports_not_a_git_repo(tmp_path: Path, monkeypatch: pytest.Monke
     assert "not a git repository" in result.output
 
 
+VALID_YAML_WITH_REGISTRY = """
+app:
+  name: my-app
+  image: ghcr.io/me/my-app:latest
+  port: 8080
+  healthPath: /health
+  registry:
+    server: ghcr.io
+    usernameEnv: REGISTRY_USERNAME
+    passwordEnv: REGISTRY_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def _write_config_with_registry(tmp_path: Path) -> Path:
+    p = tmp_path / "nexus.yaml"
+    p.write_text(VALID_YAML_WITH_REGISTRY)
+    return p
+
+
+def test_doctor_no_registry_configured_reports_nothing_about_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """app.registry unset (the default/most common case) shouldn't show a
+    registry line in the report at all — only apps that opted in are
+    checked.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "registry" not in result.output.lower()
+
+
+def test_doctor_reports_missing_registry_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config_with_registry(tmp_path)
+    monkeypatch.delenv("REGISTRY_USERNAME", raising=False)
+    monkeypatch.delenv("REGISTRY_PASSWORD", raising=False)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "REGISTRY_USERNAME" in result.output
+    assert "REGISTRY_PASSWORD" in result.output
+    # Never print the actual credential values, even if they happen to be set.
+    assert "hunter2" not in result.output
+
+
+def test_doctor_registry_credentials_present_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config_with_registry(tmp_path)
+    monkeypatch.setenv("REGISTRY_USERNAME", "alice")
+    monkeypatch.setenv("REGISTRY_PASSWORD", "hunter2")
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "Everything looks good" in result.output
+    assert "hunter2" not in result.output  # never echo the actual credential
+
+
 def test_doctor_platform_components_not_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

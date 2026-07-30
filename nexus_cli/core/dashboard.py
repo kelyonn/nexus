@@ -4,14 +4,16 @@ No Typer here — this is the reusable half (preflight checks, process
 launch, health poll, shutdown), so it can be unit-tested without going
 through the CLI. The command module owns option parsing and printing.
 
-**Known gap, documented rather than hidden:** ``dashboard/backend`` and
-``dashboard/frontend`` ship as plain source in the repo, not inside the
-installable wheel (see ``pyproject.toml``'s wheel packaging — only
-``nexus_cli`` is a package). So this only works from a checkout of the Nexus
-repository itself, not from a bare ``pip install nexus-gitops[dashboard]``.
-That's a real limitation, not an oversight: bundling a prebuilt Next.js
-frontend into a Python wheel is a separate piece of work, tracked as a
-follow-up rather than solved here.
+One subprocess, not two: the frontend is a static export (``next build``
+with ``NEXUS_STATIC_EXPORT=1``, see ``dashboard/frontend/next.config.ts``)
+that ``dashboard/backend/main.py`` serves itself alongside its own ``/api/*``
+routes. This is what makes ``pip install nexus-gitops[dashboard]`` work on a
+machine with no Node installed — Node/npm are a *maintainer*-time
+requirement (building the wheel, see ``hatch_build.py``), not a user one.
+Before this, ``dashboard/frontend`` shipped as source only and needed its own
+``npm run dev`` process; that workflow still exists for frontend development
+(see ``dashboard/frontend/README.md``), it's just no longer what ``nexus
+dashboard`` itself launches.
 """
 
 from __future__ import annotations
@@ -19,7 +21,6 @@ from __future__ import annotations
 import importlib.util
 import os
 import secrets
-import shutil
 import signal
 import subprocess
 import sys
@@ -33,17 +34,29 @@ from nexus_cli.core.output import NexusError
 
 BACKEND_HOST = "127.0.0.1"
 BACKEND_PORT = 3002
-FRONTEND_PORT = 3001
 BACKEND_READY_TIMEOUT = 15
 SHUTDOWN_GRACE_PERIOD = 5
 TOKEN_ENV_VAR = "NEXUS_DASHBOARD_TOKEN"
+# The directory `nexus dashboard` was launched from — normally the one
+# containing the app's own nexus.yaml and git checkout, same convention every
+# other command follows. The backend's own process cwd is fixed to
+# `repo_root()` (it needs to import `dashboard.backend.main` as a module), so
+# without this it has no way to find the app's repo for commit-message
+# lookups (core.git.commit_subject) in the GitOps Log.
+APP_REPO_DIR_ENV_VAR = "NEXUS_APP_REPO_DIR"
 
 # Must match deploy.py's PROM_RELEASE ("kube-prom-stack") — the
-# kube-prometheus-stack chart names its Grafana Service "<release>-grafana".
+# kube-prometheus-stack chart names its Grafana Service "<release>-grafana"
+# and its Prometheus Service "<release>-kube-prome-prometheus".
 GRAFANA_NAMESPACE = "monitoring"
 GRAFANA_SERVICE = "kube-prom-stack-grafana"
 GRAFANA_LOCAL_PORT = 3000
 GRAFANA_REMOTE_PORT = 80
+
+PROMETHEUS_NAMESPACE = "monitoring"
+PROMETHEUS_SERVICE = "kube-prom-stack-kube-prome-prometheus"
+PROMETHEUS_LOCAL_PORT = 9090
+PROMETHEUS_REMOTE_PORT = 9090
 
 
 def repo_root() -> Path:
@@ -82,16 +95,21 @@ def check_backend_source_present() -> None:
         )
 
 
-def check_frontend_ready() -> None:
-    if shutil.which("npm") is None:
+def check_frontend_built() -> None:
+    """The frontend ships as a static export (``out/``), not source that
+    needs npm at runtime — see this module's docstring. A release wheel
+    bundles it (``hatch_build.py``); a repo checkout needs one manual
+    ``npm run build`` before the first ``nexus dashboard``.
+    """
+    if not (frontend_dir() / "out" / "index.html").is_file():
         raise NexusError(
-            what="npm is required but not installed.",
-            fix="Install Node.js (which bundles npm): https://nodejs.org/",
-        )
-    if not (frontend_dir() / "node_modules").is_dir():
-        raise NexusError(
-            what="Dashboard frontend dependencies aren't installed.",
-            fix=f"Run `npm install` in {frontend_dir()}.",
+            what="Dashboard frontend isn't built.",
+            why=f"Expected {frontend_dir() / 'out'} — not present.",
+            fix=(
+                "If you installed a release wheel this shouldn't happen — please file a bug. "
+                f"From a repo checkout, run: cd {frontend_dir()} && "
+                "NEXUS_STATIC_EXPORT=1 npm ci && NEXUS_STATIC_EXPORT=1 npm run build"
+            ),
         )
 
 
@@ -100,7 +118,7 @@ def generate_token() -> str:
 
 
 def start_backend(token: str) -> subprocess.Popen[bytes]:
-    env = {**os.environ, TOKEN_ENV_VAR: token}
+    env = {**os.environ, TOKEN_ENV_VAR: token, APP_REPO_DIR_ENV_VAR: os.getcwd()}
     return subprocess.Popen(
         [
             sys.executable,
@@ -122,53 +140,66 @@ def start_backend(token: str) -> subprocess.Popen[bytes]:
     )
 
 
-def start_frontend() -> subprocess.Popen[bytes]:
-    return subprocess.Popen(
-        ["npm", "run", "dev"],
-        cwd=str(frontend_dir()),
-        start_new_session=True,
-    )
+def service_available(service: str, namespace: str) -> bool:
+    """Whether a Service exists to port-forward to.
 
-
-def grafana_available() -> bool:
-    """Whether the cluster has a Grafana Service to port-forward to.
-
-    Best-effort: kubectl missing, cluster unreachable, or monitoring never
-    enabled all just mean "no Grafana" here — none of that should stop
-    ``nexus dashboard`` itself from starting, since the Metrics panel already
-    degrades gracefully (its own reachability check shows setup
-    instructions) when there's nothing to forward to.
+    Best-effort: kubectl missing, cluster unreachable, or the component never
+    installed all just mean "nothing to forward to" here — none of that
+    should stop ``nexus dashboard`` itself from starting, since callers
+    (Metrics panel, sparklines) already degrade gracefully on their own when
+    there's nothing listening on the other end.
     """
     try:
-        kubectl.get_json("svc", namespace=GRAFANA_NAMESPACE, name=GRAFANA_SERVICE)
+        kubectl.get_json("svc", namespace=namespace, name=service)
     except NexusError:
         return False
     return True
 
 
-def start_grafana_port_forward() -> subprocess.Popen[bytes] | None:
-    """``kubectl port-forward`` to Grafana, or ``None`` if there's nothing to forward to.
+def start_port_forward(
+    service: str, namespace: str, local_port: int, remote_port: int
+) -> subprocess.Popen[bytes] | None:
+    """``kubectl port-forward`` to a Service, or ``None`` if it doesn't exist.
 
-    Makes the dashboard's Metrics panel work out of the box instead of
-    requiring the user to run this command themselves in another terminal —
-    PRD §10.4's iframe is only useful if something is actually listening on
-    the other end. If port 3000 is already taken (another instance, a manual
-    port-forward already running), kubectl's own error prints directly since
-    output isn't captured; the panel's reachability check still degrades
-    gracefully either way.
+    Used for both Grafana and Prometheus so the dashboard's Metrics panel and
+    sparklines work out of the box instead of requiring the user to run this
+    command themselves in another terminal. If the local port is already
+    taken (another instance, a manual port-forward already running),
+    kubectl's own error prints directly since output isn't captured; callers'
+    own reachability checks still degrade gracefully either way.
     """
-    if not grafana_available():
+    if not service_available(service, namespace):
         return None
     return subprocess.Popen(
         [
             "kubectl",
             "port-forward",
-            f"svc/{GRAFANA_SERVICE}",
-            f"{GRAFANA_LOCAL_PORT}:{GRAFANA_REMOTE_PORT}",
+            f"svc/{service}",
+            f"{local_port}:{remote_port}",
             "-n",
-            GRAFANA_NAMESPACE,
+            namespace,
         ],
         start_new_session=True,
+    )
+
+
+def grafana_available() -> bool:
+    return service_available(GRAFANA_SERVICE, GRAFANA_NAMESPACE)
+
+
+def start_grafana_port_forward() -> subprocess.Popen[bytes] | None:
+    return start_port_forward(
+        GRAFANA_SERVICE, GRAFANA_NAMESPACE, GRAFANA_LOCAL_PORT, GRAFANA_REMOTE_PORT
+    )
+
+
+def prometheus_available() -> bool:
+    return service_available(PROMETHEUS_SERVICE, PROMETHEUS_NAMESPACE)
+
+
+def start_prometheus_port_forward() -> subprocess.Popen[bytes] | None:
+    return start_port_forward(
+        PROMETHEUS_SERVICE, PROMETHEUS_NAMESPACE, PROMETHEUS_LOCAL_PORT, PROMETHEUS_REMOTE_PORT
     )
 
 
@@ -189,7 +220,7 @@ def wait_for_backend_ready(*, timeout: int = BACKEND_READY_TIMEOUT) -> None:
 
 
 def dashboard_url(token: str) -> str:
-    return f"http://localhost:{FRONTEND_PORT}/?token={token}"
+    return f"http://localhost:{BACKEND_PORT}/?token={token}"
 
 
 def _signal_group(proc: subprocess.Popen[bytes], sig: int) -> None:
@@ -222,25 +253,31 @@ def shutdown(*processes: subprocess.Popen[bytes]) -> None:
 
 
 __all__ = [
+    "APP_REPO_DIR_ENV_VAR",
     "BACKEND_HOST",
     "BACKEND_PORT",
-    "FRONTEND_PORT",
     "GRAFANA_LOCAL_PORT",
     "GRAFANA_NAMESPACE",
     "GRAFANA_SERVICE",
+    "PROMETHEUS_LOCAL_PORT",
+    "PROMETHEUS_NAMESPACE",
+    "PROMETHEUS_SERVICE",
     "TOKEN_ENV_VAR",
     "backend_dir",
     "check_backend_source_present",
     "check_dashboard_deps_installed",
-    "check_frontend_ready",
+    "check_frontend_built",
     "dashboard_url",
     "frontend_dir",
     "generate_token",
     "grafana_available",
+    "prometheus_available",
     "repo_root",
+    "service_available",
     "shutdown",
     "start_backend",
-    "start_frontend",
     "start_grafana_port_forward",
+    "start_port_forward",
+    "start_prometheus_port_forward",
     "wait_for_backend_ready",
 ]
