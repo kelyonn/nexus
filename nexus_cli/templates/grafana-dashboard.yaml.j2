@@ -204,16 +204,19 @@ data:
         ]
       }
     }
-{% if app.metricsPath %}
+{% if app.metricsPath and app.stack == "flask" %}
   # These three assume the app exposes Prometheus metrics named
   # flask_http_request_total{method,status} and
   # flask_http_request_duration_seconds_bucket{method,path,status,le} — what
   # prometheus-flask-exporter actually emits (verified empirically against a
   # running instance, not assumed: it does NOT use the generic
   # http_requests_total naming some other client libraries use). The
-  # ServiceMonitor scrapes any app.metricsPath regardless of exporter, but
-  # these specific panel queries are tied to this one library's metric names
-  # — a different framework/exporter needs different PromQL here.
+  # ServiceMonitor scrapes any app.metricsPath regardless of exporter — that
+  # part is stack-agnostic — but these specific panel queries are tied to
+  # this one library's metric names, so they're gated on app.stack ==
+  # "flask" too: a node/generic app with metricsPath set still gets scraped,
+  # it just doesn't get three permanently-empty panels querying metric names
+  # its own exporter never emits.
   http-request-rate.json: |-
     {
       "uid": "{{ app.name }}-requests",

@@ -23,9 +23,18 @@ Design notes / deliberate deviations from a literal byte-for-byte comparison:
    requests and limits as a schema field, so the template adds that block —
    this is implementing a specified schema field, not inventing content.
 
+4. **Service type.** The legacy Service is ``type: LoadBalancer``. The
+   default is now ``ClusterIP`` (``app.serviceType``, still overridable): the
+   documented access path (``nexus deploy``'s own success message) is
+   ``kubectl port-forward``, which works against any Service type, while
+   ``LoadBalancer`` sits ``<pending>`` forever on a bare Kind/Minikube
+   cluster and provisions a real, billed load balancer per app on a real
+   cloud one. A product-level correction, not a legacy-fidelity gap — see
+   ``docs_site/cloud/index.md``.
+
 Every other field (probe paths/timings, container port, image, replicas,
-env vars, service type, ArgoCD sync policy, PrometheusRule alerting logic,
-Grafana dashboard panel structure) is asserted to match the legacy manifests'
+env vars, ArgoCD sync policy, PrometheusRule alerting logic, Grafana
+dashboard panel structure) is asserted to match the legacy manifests'
 structure exactly, using values driven by the flask-demo example's own
 nexus.yaml (which reproduces the legacy demo's real values: image
 kelyonnnn17/nexus-app:v1, port 5050, healthPath /healthz, replicas 2).
@@ -285,7 +294,8 @@ def test_service_matches_legacy_structure(rendered: dict[str, str]) -> None:
     assert doc["spec"]["ports"] == [
         {"name": "http", "protocol": "TCP", "port": 80, "targetPort": 5050}
     ]
-    assert doc["spec"]["type"] == "LoadBalancer"  # legacy: LoadBalancer
+    # ClusterIP, not legacy's LoadBalancer — deviation #4 above.
+    assert doc["spec"]["type"] == "ClusterIP"
 
 
 def test_service_adds_no_extra_port_when_metrics_share_app_port(
@@ -296,6 +306,13 @@ def test_service_adds_no_extra_port_when_metrics_share_app_port(
     (doc,) = render.parse_documents(rendered["service"])
     assert len(doc["spec"]["ports"]) == 1
     assert doc["spec"]["ports"][0]["name"] == "http"
+
+
+def test_service_type_overridable(flask_demo_config: config.NexusConfig) -> None:
+    flask_demo_config.app.serviceType = "LoadBalancer"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["service"])
+    assert doc["spec"]["type"] == "LoadBalancer"
 
 
 def test_service_adds_metrics_port_when_it_differs_from_app_port(
@@ -460,6 +477,23 @@ def test_grafana_dashboard_adds_http_panels_when_metrics_path_set(
     expr = latency["panels"][0]["targets"][0]["expr"]
     assert "histogram_quantile(0.95" in expr
     assert "flask_http_request_duration_seconds_bucket" in expr
+
+
+def test_grafana_dashboard_omits_flask_http_panels_for_non_flask_stack(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """A node/generic app with metricsPath set still gets scraped (the
+    ServiceMonitor is stack-agnostic — see test_servicemonitor_* above) but
+    must not get three panels querying flask_http_request_* metric names its
+    own exporter never emits.
+    """
+    flask_demo_config.app.metricsPath = "/metrics"
+    flask_demo_config.app.stack = "node"
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["grafana-dashboard"])
+    assert not {"http-request-rate.json", "http-error-rate.json", "http-latency.json"} & set(
+        doc["data"]
+    )
 
 
 # --- podchaos.yaml.j2 (legacy/chaos/pod-kill.yaml + pod-kill-schedule.yaml) ---

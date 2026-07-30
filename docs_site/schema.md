@@ -24,6 +24,7 @@ so a typo fails loudly instead of being silently ignored.
 | `env` | list of `{name, value, plaintext}` | `[]` | `value` is rejected if it looks like a credential — see below |
 | `resources` | see below | `100m`/`128Mi` requests, `500m`/`512Mi` limits | — |
 | `security` | see below | Kubernetes' own permissive defaults | — |
+| `serviceType` | `ClusterIP` \| `NodePort` \| `LoadBalancer` | `ClusterIP` | — |
 
 ### `imagePullPolicy`
 
@@ -186,6 +187,21 @@ Replicas >= 2 also get a `PodDisruptionBudget` (`maxUnavailable: 1`)
 automatically — omitted at `replicas: 1`, where it would block every
 voluntary disruption (a node drain, a cluster upgrade) forever instead of
 protecting anything.
+
+### `serviceType`
+
+```yaml
+app:
+  serviceType: ClusterIP # or NodePort / LoadBalancer
+```
+
+Defaults to `ClusterIP`, reachable via the `kubectl port-forward` command
+`nexus deploy` prints on success — that works identically everywhere, so
+it's the default rather than `LoadBalancer` (which sits `<pending>` forever
+on a bare Kind/Minikube cluster, and provisions a real, billed load balancer
+per app on a real cloud one). See
+[Exposing your app](exposing-your-app.md) for the full set of options,
+including bringing your own Ingress.
 
 ## `platform`
 
