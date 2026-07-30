@@ -47,9 +47,7 @@ def status(
     name = cfg.app.name
     namespace = cfg.app.name
 
-    output.step("")
-    output.step(f"Nexus Status — {name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Status — {name}")
 
     if not kubectl.namespace_exists(namespace):
         output.warn(f"Namespace '{namespace}' not found — has `nexus deploy` been run?")
