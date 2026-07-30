@@ -28,10 +28,12 @@ from nexus_cli.core.config import NexusConfig
 
 def _remove_namespace(name: str) -> None:
     """Deletes the app's whole namespace — which also takes its ServiceMonitor
-    (PRD §10.4), its imagePullSecret (core/registry.py), and its app.secrets
-    Secret (core/secrets.py) with it, since all three live in the app's own
-    namespace, not ``monitoring``. Unlike the PrometheusRules/Grafana
-    ConfigMap below, no separate teardown step is needed for any of them.
+    (PRD §10.4), its imagePullSecret (core/registry.py), its app.secrets
+    Secret (core/secrets.py), its dedicated ServiceAccount, and its
+    PodDisruptionBudget (both rendered by core/render.py's pod-hardening
+    templates) with it, since all of these live in the app's own namespace,
+    not ``monitoring``. Unlike the PrometheusRules/Grafana ConfigMap below,
+    no separate teardown step is needed for any of them.
     """
     kubectl.delete("namespace", name)
 

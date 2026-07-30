@@ -14,7 +14,7 @@ import typer
 from pydantic import ValidationError
 
 from nexus_cli.core import detect, output
-from nexus_cli.core.config import AppConfig, NexusConfig, PlatformConfig
+from nexus_cli.core.config import AppConfig, NexusConfig, PlatformConfig, SecurityConfig
 from nexus_cli.core.output import NexusError
 
 _NAME_SANITIZE_RE = re.compile(r"[^a-z0-9-]+")
@@ -97,6 +97,13 @@ def init(
                 healthPath=health_path,
                 stack=None if preset.name == "generic" else preset.name,
                 env=list(preset.env),
+                # The schema itself defaults security.runAsNonRoot to false
+                # (an arbitrary existing image may run as root and Nexus has
+                # no way to know) — but a freshly generated config has no
+                # such image yet, so a new app can start hardened by default,
+                # with the choice visible in its own nexus.yaml from the
+                # start. See SecurityConfig's docstring in core/config.py.
+                security=SecurityConfig(runAsNonRoot=True),
             ),
             platform=PlatformConfig(repoURL=repo_url, branch=branch),
         )

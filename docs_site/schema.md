@@ -23,6 +23,7 @@ so a typo fails loudly instead of being silently ignored.
 | `secrets` | list of `{name, valueEnv}` | `[]` | See below |
 | `env` | list of `{name, value, plaintext}` | `[]` | `value` is rejected if it looks like a credential — see below |
 | `resources` | see below | `100m`/`128Mi` requests, `500m`/`512Mi` limits | — |
+| `security` | see below | Kubernetes' own permissive defaults | — |
 
 ### `imagePullPolicy`
 
@@ -152,6 +153,39 @@ app:
       cpu: "500m"
       memory: "512Mi"
 ```
+
+### `security`
+
+```yaml
+app:
+  security:
+    runAsNonRoot: false          # nexus init sets this to true for new apps
+    runAsUser: null              # a specific UID, or leave to the image's own USER
+    readOnlyRootFilesystem: false
+```
+
+Some container hardening is unconditional and always rendered on the
+Deployment regardless of this section — `allowPrivilegeEscalation: false`,
+dropping all Linux capabilities, a dedicated per-app `ServiceAccount` with
+`automountServiceAccountToken: false`, and a `seccompProfile: RuntimeDefault`
+— because no ordinary container needs any of that, so there's no tradeoff to
+make configurable.
+
+`runAsNonRoot`/`runAsUser`/`readOnlyRootFilesystem` are different: whether
+they're safe to turn on depends entirely on the image. The schema default is
+Kubernetes' own permissive default (all off), not a hardened one, because
+Nexus can't know whether an arbitrary image declares a non-root `USER` or
+expects to write to its own filesystem — flipping `runAsNonRoot: true` on an
+image that doesn't support it fails the container outright
+(`CreateContainerConfigError`) rather than degrading gracefully.
+`nexus init` sets `runAsNonRoot: true` on every newly generated `nexus.yaml`,
+so new apps opt in by default and the decision is visible, in writing, in
+your own config either way.
+
+Replicas >= 2 also get a `PodDisruptionBudget` (`maxUnavailable: 1`)
+automatically — omitted at `replicas: 1`, where it would block every
+voluntary disruption (a node drain, a cluster upgrade) forever instead of
+protecting anything.
 
 ## `platform`
 

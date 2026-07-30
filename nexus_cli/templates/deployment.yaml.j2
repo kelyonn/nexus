@@ -16,6 +16,32 @@ spec:
       labels:
         app: {{ app.name }}
     spec:
+      serviceAccountName: {{ app.name | tojson }}
+      # Nothing in an ordinary app container talks to the Kubernetes API, so
+      # the default-mounted token is pure attack surface (a compromised
+      # container gets a live credential for free). Set on the ServiceAccount
+      # too (serviceaccount.yaml.j2) — this pod-level value overrides that one
+      # regardless, but keeping both explicit means a future direct pod diff
+      # can't silently re-enable it by only touching one of the two objects.
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+{% if app.replicas > 1 %}
+      # `ScheduleAnyway`, not `requiredDuringScheduling`: the primary targets
+      # here (Kind, Minikube) are single-node, where a *required* constraint
+      # would leave every replica past the first stuck Pending forever. This
+      # only improves scheduling when multiple nodes exist; it does not by
+      # itself protect against a node drain taking every replica at once —
+      # that's what the PodDisruptionBudget (pdb.yaml.j2) is for.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: {{ app.name }}
+{% endif %}
 {% if app.registry %}
       imagePullSecrets:
       - name: {{ app.registry_secret_name }}
@@ -24,6 +50,20 @@ spec:
       - name: {{ app.name }}
         image: {{ app.image | tojson }}
         imagePullPolicy: {{ app.imagePullPolicy | tojson }}
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+              - ALL
+{% if app.security.runAsNonRoot %}
+          runAsNonRoot: true
+{% endif %}
+{% if app.security.runAsUser is not none %}
+          runAsUser: {{ app.security.runAsUser }}
+{% endif %}
+{% if app.security.readOnlyRootFilesystem %}
+          readOnlyRootFilesystem: true
+{% endif %}
         ports:
         - containerPort: {{ app.port }}
 {% if app.env or app.secrets %}
@@ -55,6 +95,18 @@ spec:
           limits:
             cpu: {{ app.resources.limits.cpu | tojson }}
             memory: {{ app.resources.limits.memory | tojson }}
+        # Gives a slow-booting app up to periodSeconds * failureThreshold =
+        # 150s to come up before readiness/liveness start counting against
+        # it at all (their own initialDelaySeconds below only applies once
+        # this succeeds) — without this, a container that takes >5s to bind
+        # its port looks identical to a crash-looping one.
+        startupProbe:
+          httpGet:
+            path: {{ app.healthPath | tojson }}
+            port: {{ app.port }}
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 30
         readinessProbe:
           httpGet:
             path: {{ app.healthPath | tojson }}
