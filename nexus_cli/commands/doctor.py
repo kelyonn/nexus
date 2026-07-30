@@ -44,19 +44,25 @@ def _preflight_checks() -> list[DoctorCheck]:
 def _check_rbac() -> DoctorCheck:
     can_create_ns = kubectl.can_i("create", "namespaces")
     can_create_deploy = kubectl.can_i("create", "deployments", all_namespaces=True)
-    if can_create_ns and can_create_deploy:
-        return DoctorCheck("rbac", True, "Current context can create namespaces and deployments")
+    can_create_secrets = kubectl.can_i("create", "secrets", all_namespaces=True)
+    if can_create_ns and can_create_deploy and can_create_secrets:
+        return DoctorCheck(
+            "rbac", True, "Current context can create namespaces, deployments, and secrets"
+        )
     missing = []
     if not can_create_ns:
         missing.append("create namespaces")
     if not can_create_deploy:
         missing.append("create deployments")
+    if not can_create_secrets:
+        missing.append("create secrets")
     return DoctorCheck(
         "rbac",
         False,
         f"Current context cannot {', '.join(missing)}",
-        "Nexus needs a context with permission to create namespaces, deployments, and "
-        "services. Ask your cluster admin for a role with these permissions, or "
+        "Nexus needs a context with permission to create namespaces, deployments, "
+        "services, and secrets (the last is only used when app.registry or app.secrets "
+        "is set). Ask your cluster admin for a role with these permissions, or "
         "`kubectl config use-context` to one that already has them.",
     )
 
@@ -144,6 +150,26 @@ def _check_registry(cfg: NexusConfig) -> DoctorCheck | None:
     return DoctorCheck("registry", True, "Registry credential env vars are set")
 
 
+def _check_secrets(cfg: NexusConfig) -> DoctorCheck | None:
+    """Only runs when app.secrets is set. Same reasoning as _check_registry:
+    checks *presence* only, never prints values — a doctor report is exactly
+    the kind of thing that ends up pasted into a bug report or chat message.
+    """
+    if not cfg.app.secrets:
+        return None
+    missing = [
+        entry.valueEnv for entry in cfg.app.secrets if not os.environ.get(entry.valueEnv)
+    ]
+    if missing:
+        return DoctorCheck(
+            "secrets",
+            False,
+            f"Secret env var(s) not set: {', '.join(missing)}",
+            f"Set {' and '.join(missing)} in your shell before running `nexus deploy`.",
+        )
+    return DoctorCheck("secrets", True, "app.secrets env vars are set")
+
+
 def _platform_status() -> list[tuple[str, str, bool]]:
     return [
         (label, namespace, helm.release_exists(release, namespace))
@@ -172,6 +198,9 @@ def doctor(
         registry_check = _check_registry(cfg)
         if registry_check is not None:
             checks.append(registry_check)
+        secrets_check = _check_secrets(cfg)
+        if secrets_check is not None:
+            checks.append(secrets_check)
 
     for c in checks:
         if c.passed:

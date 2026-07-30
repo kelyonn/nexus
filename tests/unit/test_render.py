@@ -402,6 +402,80 @@ def test_registry_set_adds_image_pull_secrets_referencing_derived_name(
     assert doc["spec"]["template"]["spec"]["imagePullSecrets"] == [
         {"name": flask_demo_config.app.registry_secret_name}
     ]
+
+
+# --- app.secrets -> secretKeyRef (core/secrets.py automation) ---
+
+
+def test_secrets_unset_omits_env_block_entirely(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.env = []
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    assert "env" not in doc["spec"]["template"]["spec"]["containers"][0]
+
+
+def test_secrets_set_renders_secret_key_ref_with_no_value_key(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    """The load-bearing assertion: a secretKeyRef entry has no `value:` key
+    at all — the actual secret never passes through this template, only a
+    reference to a key in a Secret core/secrets.py applies separately.
+    """
+    flask_demo_config.app.secrets = [
+        config.SecretVar(name="DB_PASSWORD", valueEnv="APP_DB_PASSWORD")
+    ]
+    rendered = render.render_manifests(flask_demo_config)
+    assert "APP_DB_PASSWORD" not in rendered["deployment"]
+
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    secret_entries = [e for e in container["env"] if e["name"] == "DB_PASSWORD"]
+    assert secret_entries == [
+        {
+            "name": "DB_PASSWORD",
+            "valueFrom": {
+                "secretKeyRef": {
+                    "name": flask_demo_config.app.secret_name,
+                    "key": "DB_PASSWORD",
+                }
+            }
+        }
+    ]
+    assert "value" not in secret_entries[0]
+
+
+def test_secrets_coexist_with_plain_env_vars(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.secrets = [
+        config.SecretVar(name="DB_PASSWORD", valueEnv="APP_DB_PASSWORD")
+    ]
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    names = {e["name"] for e in container["env"]}
+    # flask-demo's own env (VERSION, BG_COLOR — see test_deployment_matches_legacy_structure)
+    assert names == {"VERSION", "BG_COLOR", "DB_PASSWORD"}
+
+
+def test_secrets_only_no_plain_env_still_adds_env_block(
+    flask_demo_config: config.NexusConfig,
+) -> None:
+    flask_demo_config.app.env = []
+    flask_demo_config.app.secrets = [
+        config.SecretVar(name="DB_PASSWORD", valueEnv="APP_DB_PASSWORD")
+    ]
+    rendered = render.render_manifests(flask_demo_config)
+    (doc,) = render.parse_documents(rendered["deployment"])
+    container = doc["spec"]["template"]["spec"]["containers"][0]
+    assert "env" in container
+    assert len(container["env"]) == 1
+
+
+def test_secret_name_derived_from_app_name(flask_demo_config: config.NexusConfig) -> None:
+    assert flask_demo_config.app.secret_name == "nexus-app-secrets"
     assert flask_demo_config.app.registry_secret_name == "nexus-app-registry"
 
 

@@ -12,23 +12,32 @@ code started.
 
 ---
 
-## 1. Secret management (Sealed Secrets or SOPS)
+## 1. Encrypted-at-rest secrets in git (Sealed Secrets or SOPS)
 
-**The problem:** GitOps has a hard boundary — you can't commit a raw secret
-(a DB password, an API key) to git, but `nexus deploy` currently has no
-opinion about secrets at all. Today, a user has to solve this themselves,
-entirely outside the `nexus deploy` flow.
+**Status: the common case is closed.** `app.secrets` (`nexus.yaml` schema,
+`core/secrets.py`) lets an app reference real secrets — each entry names an
+environment variable to read the value from at deploy time; `nexus deploy`
+creates the resulting `Secret` imperatively via `kubectl` and never writes it
+to `k8s/`, mirroring the pattern `app.registry` already used for imagePull
+credentials. `app.env` additionally rejects values that look
+credential-shaped (a deny-list on the name plus a couple of value patterns —
+URLs with embedded userinfo, PEM headers), with a `plaintext: true` escape
+hatch for false positives. See `docs_site/schema.md`'s `secrets` section.
 
-**Why this is the one actually worth building, eventually:** unlike the
-other gaps in this project, this one is a real, structural limitation of
-"GitOps done simply" — not a missing convenience. Closing it would be a
-genuine capability jump, not polish.
+**What's still open — the actually-hard remaining problem:** `app.secrets`
+requires the operator to have the real value sitting in a local environment
+variable at deploy time. That's fine for a human running `nexus deploy` from
+their own shell, but it doesn't give a CI/CD pipeline (or a second operator
+without access to the original value) anything to check into git — there's
+still no way to commit an encrypted secret *and* have `nexus deploy` decrypt
+it at apply time. That's what this section was originally about, and it's
+still real:
 
 **Why it's not started:** this is the highest-risk thing on this whole list.
 A bug in secret handling has actual security consequences, not just a broken
-dashboard panel — and it's also the largest scope expansion this project
-would have taken on (Nexus has deliberately stayed narrow so far: no
-Ingress, no multi-app support, no telemetry).
+dashboard panel — and it's also a larger scope expansion than `app.secrets`
+turned out to be (Nexus has deliberately stayed narrow so far: no Ingress,
+no multi-app support, no telemetry).
 
 **Design questions to resolve before writing any code** (this needs its own
 plan-mode pass, not an ad-hoc build):
@@ -48,12 +57,14 @@ plan-mode pass, not an ad-hoc build):
   already found and fixed in this project (see
   `docs_site/troubleshooting.md`) — expect a real race here too, and plan to
   live-verify it, not just unit-test it.
-- **Where do sealed secrets live in `nexus.yaml`?** A new `app.secrets:`
-  block? A separate `secrets.yaml` file `nexus deploy` also reads? Sealed
-  Secrets' actual encrypted output (a `SealedSecret` CRD instance) is safe
-  to commit — so it could plausibly render through the same
-  `core/render.py` → `k8s/` → git → ArgoCD pipeline every other manifest
-  already uses, which would be the more consistent design if it works.
+- **Where do sealed secrets live in `nexus.yaml`?** `app.secrets` is already
+  taken (env-var-name references — see above), so this needs its own field,
+  e.g. `app.sealedSecrets:`, or a separate `secrets.yaml` file `nexus deploy`
+  also reads. Sealed Secrets' actual encrypted output (a `SealedSecret` CRD
+  instance) is safe to commit — so it could plausibly render through the
+  same `core/render.py` → `k8s/` → git → ArgoCD pipeline every other
+  manifest already uses, which would be the more consistent design if it
+  works.
 - **Key rotation and `nexus destroy`.** What happens to a `SealedSecret`
   when the underlying keypair rotates? What does `destroy` do with secrets
   — same "namespace deletion cleans it up implicitly" pattern as everything

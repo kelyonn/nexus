@@ -9,6 +9,7 @@ would have produced. Covers: deploy → status → destroy, `deploy` run twice
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from pathlib import Path
@@ -111,6 +112,50 @@ def test_deploy_git_sync_soft_skips_on_branch_mismatch(scratch_repo: Path) -> No
         wait_for_pods_running(app_name, expected_count=2)
     finally:
         _destroy(scratch_repo, app_name)
+
+
+def test_deploy_with_app_secret_never_writes_the_value_to_disk(scratch_repo: Path) -> None:
+    """The real, end-to-end proof of the app.secrets design (unit tests
+    prove the mechanism against mocks; this proves the actual claim against
+    a real cluster): the Secret exists, the pod's env resolves it, and the
+    secret value appears nowhere under the scratch repo's k8s/ tree — the
+    directory `nexus deploy` commits to git.
+    """
+    secret_value = "hunter2-integration-test-only"
+    os.environ["IT_APP_DB_PASSWORD"] = secret_value
+    try:
+        app_name = _app_name("it-secret")
+        try:
+            write_flask_demo_config(
+                scratch_repo,
+                app_name=app_name,
+                secrets=[{"name": "DB_PASSWORD", "valueEnv": "IT_APP_DB_PASSWORD"}],
+            )
+            result = run_nexus(["deploy", "--yes"], cwd=scratch_repo, timeout=DEPLOY_TIMEOUT)
+            assert_succeeded_or_known_health_quirk(result)
+            wait_for_pods_running(app_name, expected_count=2)
+
+            secret = kubectl_json("get", "secret", f"{app_name}-secrets", "-n", app_name)
+            assert secret != {}, "app.secrets Secret was not created"
+            assert "DB_PASSWORD" in secret["data"]
+
+            pods = kubectl_json("get", "pods", "-n", app_name)["items"]
+            pod_name = pods[0]["metadata"]["name"]
+            container = pods[0]["spec"]["containers"][0]
+            env_names = {e["name"] for e in container.get("env", [])}
+            assert "DB_PASSWORD" in env_names
+            assert pod_name  # sanity: a real pod exists to have checked this on
+
+            # The claim this test exists to prove: the value never reaches
+            # the git-tracked k8s/ directory nexus deploy commits.
+            k8s_dir = scratch_repo / "k8s"
+            if k8s_dir.exists():
+                for manifest in k8s_dir.glob("*.yaml"):
+                    assert secret_value not in manifest.read_text()
+        finally:
+            _destroy(scratch_repo, app_name)
+    finally:
+        del os.environ["IT_APP_DB_PASSWORD"]
 
 
 def test_status_reports_reasonable_speed(scratch_repo: Path) -> None:
