@@ -23,6 +23,7 @@ class PodInfo:
     phase: str
     restarts: int
     problem: str | None
+    created_at: str | None = None  # RFC3339, straight from the pod's creationTimestamp
 
 
 def _pod_problem(pod: dict) -> str | None:
@@ -49,6 +50,7 @@ def list_pods(namespace: str) -> list[PodInfo]:
                 phase=item.get("status", {}).get("phase", "Unknown"),
                 restarts=_pod_restarts(item),
                 problem=_pod_problem(item),
+                created_at=item.get("metadata", {}).get("creationTimestamp"),
             )
         )
     return pods
@@ -62,9 +64,24 @@ def replica_counts(namespace: str, name: str) -> tuple[int, int]:
     return desired, available
 
 
-def image_pull_fix() -> str:
-    """Context-aware fix suggestion for ImagePullBackOff (PRD §7.2)."""
+def image_pull_fix(pull_policy: str = "Always") -> str:
+    """Context-aware fix suggestion for ImagePullBackOff (PRD §7.2).
+
+    ``minikube image load`` only helps if the kubelet is actually willing to
+    use the locally-loaded image — under ``imagePullPolicy: Always`` (the
+    config default), it always re-checks the registry regardless of what's
+    already loaded, so the fix would silently do nothing. Callers should pass
+    the app's real ``app.imagePullPolicy`` so the advice matches what will
+    actually work.
+    """
     context = kubectl.current_context() or ""
     if "minikube" in context.lower():
+        if pull_policy == "Always":
+            return (
+                "Run `minikube image load <image>`, then set "
+                "`app.imagePullPolicy: IfNotPresent` in nexus.yaml and re-deploy — "
+                "under the default `Always`, the kubelet re-checks the registry "
+                "regardless of what's loaded locally, so the load alone won't help."
+            )
         return "Run `minikube image load <image>` to make the image visible to the cluster."
     return "Push the image to a registry the cluster can reach (Docker Hub, GHCR, ECR, etc.)."

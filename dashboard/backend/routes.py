@@ -7,12 +7,16 @@ dashboard can never silently disagree about what a given app's status means.
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from dashboard.backend import prometheus
 from dashboard.backend.auth import require_token
-from nexus_cli.core import argocd, kubectl
+from nexus_cli.core import argocd, git, kubectl
 from nexus_cli.core import chaos as core_chaos
+from nexus_cli.core import dashboard as core_dashboard
 from nexus_cli.core import status as core_status
 from nexus_cli.core.output import NexusError
 
@@ -26,6 +30,7 @@ class AppSummary(BaseModel):
     last_sync_time: str | None
     desired_replicas: int
     available_replicas: int
+    has_http_metrics: bool
 
 
 class PodSummary(BaseModel):
@@ -33,6 +38,7 @@ class PodSummary(BaseModel):
     phase: str
     restarts: int
     problem: str | None
+    created_at: str | None
 
 
 class ChaosRequest(BaseModel):
@@ -47,6 +53,7 @@ class ChaosResponse(BaseModel):
 class SyncEventOut(BaseModel):
     revision: str | None
     deployed_at: str | None
+    subject: str | None
 
 
 class SyncLogResponse(BaseModel):
@@ -55,6 +62,16 @@ class SyncLogResponse(BaseModel):
     health_status: str
     last_sync_time: str | None
     history: list[SyncEventOut]
+
+
+class MetricPoint(BaseModel):
+    timestamp: float
+    value: float
+
+
+class MetricsResponse(BaseModel):
+    cpu: list[MetricPoint]
+    memory: list[MetricPoint]
 
 
 def _app_or_404(name: str) -> argocd.ArgoAppStatus:
@@ -88,6 +105,15 @@ def list_apps() -> list[AppSummary]:
             if not kubectl.is_not_found(err.why or ""):
                 raise HTTPException(status_code=502, detail=str(err)) from err
             desired, available = 0, 0
+        try:
+            has_http_metrics = kubectl.resource_exists(
+                "servicemonitor", app.name, namespace=app.name
+            )
+        except NexusError:
+            # Best-effort, like the replica lookup above — a hiccup here
+            # shouldn't cost the user the whole Overview. Worst case, the App
+            # Detail page just doesn't show the HTTP panels for this app.
+            has_http_metrics = False
         summaries.append(
             AppSummary(
                 name=app.name,
@@ -96,6 +122,7 @@ def list_apps() -> list[AppSummary]:
                 last_sync_time=app.last_sync_time,
                 desired_replicas=desired,
                 available_replicas=available,
+                has_http_metrics=has_http_metrics,
             )
         )
     return summaries
@@ -110,7 +137,13 @@ def list_pods(name: str) -> list[PodSummary]:
     except NexusError as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
     return [
-        PodSummary(name=p.name, phase=p.phase, restarts=p.restarts, problem=p.problem)
+        PodSummary(
+            name=p.name,
+            phase=p.phase,
+            restarts=p.restarts,
+            problem=p.problem,
+            created_at=p.created_at,
+        )
         for p in pods
     ]
 
@@ -130,6 +163,46 @@ def trigger_chaos(name: str, body: ChaosRequest) -> ChaosResponse:
     return ChaosResponse(run_name=run_name)
 
 
+@router.get("/apps/{name}/metrics", response_model=MetricsResponse)
+def app_metrics(name: str, window: str = prometheus.DEFAULT_WINDOW) -> MetricsResponse:
+    """CPU/memory sparkline data for the App Detail view (PRD §10.2).
+
+    Proxies Prometheus with the exact same PromQL the CPU/Memory Grafana
+    dashboard already runs (templates/grafana-dashboard.yaml.j2), so the
+    sparklines and the full panel can never disagree.
+    """
+    _app_or_404(name)
+    try:
+        window_seconds = prometheus.parse_window(window)
+    except NexusError as err:
+        raise HTTPException(status_code=400, detail=str(err)) from err
+    try:
+        cpu = prometheus.query_range(prometheus.cpu_query(name), window_seconds)
+        memory = prometheus.query_range(prometheus.memory_query(name), window_seconds)
+    except NexusError as err:
+        raise HTTPException(status_code=502, detail=str(err)) from err
+    return MetricsResponse(
+        cpu=[MetricPoint(timestamp=ts, value=v) for ts, v in cpu],
+        memory=[MetricPoint(timestamp=ts, value=v) for ts, v in memory],
+    )
+
+
+def _commit_subject(revision: str | None) -> str | None:
+    """Best-effort commit message lookup for one sync event.
+
+    Only works when the SHA is fetched into the local checkout at
+    ``NEXUS_APP_REPO_DIR`` (the directory ``nexus dashboard`` was launched
+    from — see core/dashboard.py). For any *other* app's revisions, or if
+    that repo doesn't have the commit, this returns None and the caller
+    falls back to showing the bare SHA — the same thing this project always
+    showed before this lookup existed, not a new failure mode.
+    """
+    if not revision:
+        return None
+    repo_dir = os.environ.get(core_dashboard.APP_REPO_DIR_ENV_VAR, ".")
+    return git.commit_subject(revision, path=repo_dir)
+
+
 @router.get("/apps/{name}/synclog", response_model=SyncLogResponse)
 def sync_log(name: str) -> SyncLogResponse:
     """Recent ArgoCD sync events for one app (PRD §10.3)."""
@@ -140,5 +213,12 @@ def sync_log(name: str) -> SyncLogResponse:
         sync_status=current.sync_status,
         health_status=current.health_status,
         last_sync_time=current.last_sync_time,
-        history=[SyncEventOut(revision=h.revision, deployed_at=h.deployed_at) for h in history],
+        history=[
+            SyncEventOut(
+                revision=h.revision,
+                deployed_at=h.deployed_at,
+                subject=_commit_subject(h.revision),
+            )
+            for h in history
+        ],
     )

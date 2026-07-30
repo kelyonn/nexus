@@ -116,6 +116,34 @@ def test_deploy_happy_path_all_deps_missing(
     assert "kubectl -n my-app port-forward svc/my-app" in result.output
 
 
+def test_deploy_reports_argocd_health_quirk_instead_of_claiming_healthy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When wait_for_healthy succeeds via the ground-truth override (ArgoCD's
+    v3.4.5 health:Progressing quirk), deploy must not falsely say "Healthy".
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+    monkeypatch.setattr(
+        argocd,
+        "wait_for_healthy",
+        lambda name, timeout=0: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Progressing",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Deployment fully available" in result.output
+    assert "ArgoCD itself still reports health=Progressing" in result.output
+    assert "Synced + Healthy" not in result.output
+
+
 def test_deploy_skips_already_installed_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -130,6 +158,91 @@ def test_deploy_skips_already_installed_deps(
     assert "2. Commit manifests to Git" in result.output
     assert "3. Register ArgoCD app" in result.output
     assert "pushed to origin/main" in result.output
+
+
+VALID_YAML_WITH_REGISTRY = """
+app:
+  name: my-app
+  image: ghcr.io/me/my-app:latest
+  port: 8080
+  healthPath: /health
+  registry:
+    server: ghcr.io
+    usernameEnv: REGISTRY_USERNAME
+    passwordEnv: REGISTRY_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def test_deploy_without_registry_has_no_pull_secret_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    result = runner.invoke(app, ["deploy"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "imagePullSecret" not in result.output
+
+
+def test_deploy_with_registry_creates_pull_secret_after_apply_manifests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        deploy_module, "apply_app_manifests", lambda cfg: calls.append("apply_manifests")
+    )
+    monkeypatch.setattr(
+        deploy_module, "apply_registry_secret", lambda cfg: calls.append("apply_registry_secret")
+    )
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "Create imagePullSecret → my-app-registry" in result.output
+    assert calls == ["apply_manifests", "apply_registry_secret"]
+
+
+def test_deploy_registry_secret_failure_stops_deploy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
+    monkeypatch.chdir(tmp_path)
+    _stub_common(monkeypatch, all_installed=True)
+
+    def failing_registry_step(cfg: object) -> None:
+        raise NexusError(what="Registry credential env var(s) not set: REGISTRY_USERNAME.")
+
+    monkeypatch.setattr(deploy_module, "apply_registry_secret", failing_registry_step)
+
+    result = runner.invoke(app, ["deploy", "--yes"])
+    assert result.exit_code != 0
+    assert "aborted at this step" in result.output
+    assert "REGISTRY_USERNAME" in result.output
+
+
+def test_apply_registry_secret_delegates_to_registry_module(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cfg = NexusConfig(
+        app=AppConfig(
+            name="my-app",
+            image="ghcr.io/me/my-app:v1",
+            port=8080,
+            healthPath="/health",
+        ),
+        platform=PlatformConfig(repoURL="https://github.com/user/repo.git", branch="main"),
+    )
+    calls: list[object] = []
+    monkeypatch.setattr(deploy_module.registry, "apply_pull_secret", lambda app: calls.append(app))
+    deploy_module.apply_registry_secret(cfg)
+    assert calls == [cfg.app]
 
 
 def test_deploy_yes_flag_skips_prompt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,6 +321,34 @@ def test_install_monitoring_enables_grafana_iframe_embedding(
     # helm --set treats "." as a path separator, so the dot inside the
     # `grafana.ini` value key must stay escaped or the setting lands nowhere.
     assert all("grafana\\.ini" in key for key in values)
+    assert captured["chart_version"] == deploy_module.PROM_CHART_VERSION
+
+
+def test_install_functions_pin_chart_versions(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PRD §15: pin tested chart versions rather than always installing
+    whatever the repo currently resolves as latest.
+    """
+    calls: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(helm, "repo_add", lambda name, url: None)
+    monkeypatch.setattr(
+        helm,
+        "upgrade_install",
+        lambda release, chart, **k: calls.append((release, chart, k.get("chart_version"))),
+    )
+
+    deploy_module._install_argocd()
+    deploy_module._install_monitoring()
+    deploy_module._install_chaos()
+
+    assert calls == [
+        (deploy_module.ARGO_RELEASE, deploy_module.ARGO_CHART, deploy_module.ARGO_CHART_VERSION),
+        (deploy_module.PROM_RELEASE, deploy_module.PROM_CHART, deploy_module.PROM_CHART_VERSION),
+        (
+            deploy_module.CHAOS_RELEASE,
+            deploy_module.CHAOS_CHART,
+            deploy_module.CHAOS_CHART_VERSION,
+        ),
+    ]
 
 
 def test_dependency_status_all_flags_off(monkeypatch: pytest.MonkeyPatch) -> None:

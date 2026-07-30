@@ -49,7 +49,8 @@ def watch(
 
     api = k8s_client.CoreV1Api()
     watcher = k8s_watch.Watch()
-    output.step(f"Watching pods in namespace '{namespace}' — Ctrl+C to stop.")
+    output.step("")
+    output.info(f"Watching pods in namespace '{namespace}' — Ctrl+C to stop.")
     try:
         for event in watcher.stream(api.list_namespaced_pod, namespace=namespace):
             pod = event["object"]

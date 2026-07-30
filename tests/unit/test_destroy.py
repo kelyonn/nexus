@@ -115,6 +115,96 @@ def test_destroy_is_idempotent_when_run_twice(
     assert result2.exit_code == 0, result2.output
 
 
+VALID_YAML_WITH_REGISTRY = """
+app:
+  name: my-app
+  image: ghcr.io/me/my-app:latest
+  port: 8080
+  healthPath: /health
+  registry:
+    server: ghcr.io
+    usernameEnv: REGISTRY_USERNAME
+    passwordEnv: REGISTRY_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def test_destroy_dry_run_shows_resources_without_prompting_or_deleting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+
+    delete_calls: list[object] = []
+    monkeypatch.setattr(kubectl, "delete", lambda *a, **k: delete_calls.append(a))
+
+    # No `input=` at all — a prompt would hang/error the test if one is shown.
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "will be permanently deleted" in result.output
+    assert "Namespace:         my-app" in result.output
+    assert "Dry run — nothing was deleted" in result.output
+    assert "Type the app name" not in result.output
+    assert delete_calls == []
+
+
+def test_destroy_dry_run_lists_registry_secret_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_REGISTRY)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "imagePullSecret:   my-app-registry" in result.output
+
+
+def test_destroy_dry_run_omits_registry_secret_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "imagePullSecret" not in result.output
+
+
+def test_destroy_dry_run_preflight_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+
+    def fail(**k: object) -> None:
+        raise NexusError(what="cluster not reachable")
+
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", fail)
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code != 0
+    assert "cluster not reachable" in result.output
+
+
+def test_destroy_without_dry_run_still_prompts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Guards against the --dry-run branch accidentally becoming the default."""
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+    monkeypatch.setattr(kubectl, "delete", lambda *a, **k: None)
+
+    result = runner.invoke(app, ["destroy"], input="my-app\n")
+    assert result.exit_code == 0, result.output
+    assert "Type the app name" in result.output
+    assert "has been fully removed" in result.output
+
+
 def test_destroy_steps_include_monitoring_when_enabled() -> None:
     cfg = _minimal_config(monitoring=True, chaos=False)
     labels = [s[0] for s in destroy_module.destroy_steps(cfg)]

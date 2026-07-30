@@ -1,0 +1,62 @@
+name: Docs
+
+# Deploys docs_site/ (via MkDocs Material) to GitHub Pages on every push to
+# main that touches the site. One-time setup required on GitHub before the
+# *first* deploy: Settings → Pages → Source: "GitHub Actions" (not "Deploy
+# from a branch"). See https://docs.github.com/pages — until that's set,
+# this workflow will build successfully but the deploy job will fail.
+#
+# docs_site/ is the source; this repo's own docs/ is a separate, gitignored,
+# local-only directory (implementation notes, not published) — see
+# mkdocs.yml's comment.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs_site/**"
+      - "mkdocs.yml"
+      - ".github/workflows/docs.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install docs dependencies
+        run: pip install -e ".[docs]"
+
+      - name: Build (strict — fails on broken internal links)
+        run: mkdocs build --strict
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

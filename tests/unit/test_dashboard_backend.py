@@ -15,7 +15,14 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from dashboard.backend import auth as auth_module  # noqa: E402
 from dashboard.backend.main import app  # noqa: E402
-from dashboard.backend.routes import core_chaos, core_status  # noqa: E402
+from dashboard.backend.routes import (  # noqa: E402
+    core_chaos,
+    core_dashboard,
+    core_status,
+    git,
+    kubectl,
+    prometheus,
+)
 from nexus_cli.core import argocd  # noqa: E402
 from nexus_cli.core.output import NexusError  # noqa: E402
 
@@ -37,14 +44,16 @@ def test_health_endpoint() -> None:
 
 
 def test_cors_restricted_to_frontend_origin() -> None:
+    # Frontend and API now share one origin (the backend's own port) — this
+    # only matters as a fallback for the two loopback spellings, see main.py.
     resp = client.options(
         "/api/apps",
         headers={
-            "Origin": "http://localhost:3001",
+            "Origin": "http://localhost:3002",
             "Access-Control-Request-Method": "GET",
         },
     )
-    assert resp.headers["access-control-allow-origin"] == "http://localhost:3001"
+    assert resp.headers["access-control-allow-origin"] == "http://localhost:3002"
 
 
 # --- GET /api/apps ---
@@ -53,6 +62,7 @@ def test_cors_restricted_to_frontend_origin() -> None:
 def test_list_apps_returns_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
     monkeypatch.setattr(core_status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: True)
 
     resp = client.get("/api/apps")
     assert resp.status_code == 200
@@ -65,8 +75,21 @@ def test_list_apps_returns_summaries(monkeypatch: pytest.MonkeyPatch) -> None:
             "last_sync_time": "t",
             "desired_replicas": 2,
             "available_replicas": 2,
+            "has_http_metrics": True,
         }
     ]
+
+
+def test_list_apps_has_http_metrics_false_when_no_servicemonitor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(argocd, "list_managed_apps", lambda: [_app_status("my-app")])
+    monkeypatch.setattr(core_status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: False)
+
+    resp = client.get("/api/apps")
+    assert resp.status_code == 200
+    assert resp.json()[0]["has_http_metrics"] is False
 
 
 def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
@@ -82,6 +105,7 @@ def test_list_apps_defaults_replicas_to_zero_when_deployment_missing(
         )
 
     monkeypatch.setattr(core_status, "replica_counts", raise_not_found)
+    monkeypatch.setattr(kubectl, "resource_exists", lambda resource, name, namespace: False)
 
     resp = client.get("/api/apps")
     assert resp.status_code == 200
@@ -144,13 +168,25 @@ def test_list_pods_returns_pod_data(monkeypatch: pytest.MonkeyPatch) -> None:
         core_status,
         "list_pods",
         lambda ns: [
-            core_status.PodInfo(name="my-app-abc", phase="Running", restarts=0, problem=None)
+            core_status.PodInfo(
+                name="my-app-abc",
+                phase="Running",
+                restarts=0,
+                problem=None,
+                created_at="2026-01-01T00:00:00Z",
+            )
         ],
     )
     resp = client.get("/api/apps/my-app/pods")
     assert resp.status_code == 200
     assert resp.json() == [
-        {"name": "my-app-abc", "phase": "Running", "restarts": 0, "problem": None}
+        {
+            "name": "my-app-abc",
+            "phase": "Running",
+            "restarts": 0,
+            "problem": None,
+            "created_at": "2026-01-01T00:00:00Z",
+        }
     ]
 
 
@@ -259,6 +295,7 @@ def test_synclog_returns_current_status_and_history(monkeypatch: pytest.MonkeyPa
             argocd.SyncEvent(revision="abc123", deployed_at="2026-01-01T00:00:00Z"),
         ],
     )
+    monkeypatch.setattr(git, "commit_subject", lambda sha, path=".": None)
     resp = client.get("/api/apps/my-app/synclog")
     assert resp.status_code == 200
     body = resp.json()
@@ -274,3 +311,115 @@ def test_synclog_empty_history_for_never_synced_app(monkeypatch: pytest.MonkeyPa
     resp = client.get("/api/apps/my-app/synclog")
     assert resp.status_code == 200
     assert resp.json()["history"] == []
+
+
+def test_synclog_includes_commit_subject_when_available_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="abc123", deployed_at="2026-01-01T00:00:00Z")],
+    )
+    monkeypatch.setattr(
+        git,
+        "commit_subject",
+        lambda sha, path=".": "nexus: upgrade image to v2" if sha == "abc123" else None,
+    )
+    resp = client.get("/api/apps/my-app/synclog")
+    assert resp.status_code == 200
+    assert resp.json()["history"][0]["subject"] == "nexus: upgrade image to v2"
+
+
+def test_synclog_subject_none_when_commit_not_found_locally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A revision from an app deployed by someone else, or a different repo
+    entirely, is an ordinary case — falls back to no subject, not an error.
+    """
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="unknown-sha", deployed_at="2026-01-01T00:00:00Z")],
+    )
+    monkeypatch.setattr(git, "commit_subject", lambda sha, path=".": None)
+    resp = client.get("/api/apps/my-app/synclog")
+    assert resp.status_code == 200
+    assert resp.json()["history"][0]["subject"] is None
+
+
+def test_synclog_uses_app_repo_dir_env_var_for_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(
+        argocd,
+        "sync_history",
+        lambda name: [argocd.SyncEvent(revision="abc123", deployed_at="t")],
+    )
+    monkeypatch.setenv(core_dashboard.APP_REPO_DIR_ENV_VAR, "/some/app/checkout")
+    captured: dict[str, str] = {}
+
+    def fake_commit_subject(sha: str, path: str = ".") -> str | None:
+        captured["path"] = path
+        return None
+
+    monkeypatch.setattr(git, "commit_subject", fake_commit_subject)
+    client.get("/api/apps/my-app/synclog")
+    assert captured["path"] == "/some/app/checkout"
+
+
+# --- GET /api/apps/{name}/metrics ---
+
+
+def test_metrics_returns_404_for_unknown_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: None)
+    resp = client.get("/api/apps/ghost-app/metrics")
+    assert resp.status_code == 404
+
+
+def test_metrics_returns_cpu_and_memory_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+
+    def fake_query_range(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        if "cpu" in promql:
+            return [(1000.0, 0.1), (1015.0, 0.2)]
+        return [(1000.0, 1048576.0)]
+
+    monkeypatch.setattr(prometheus, "query_range", fake_query_range)
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["cpu"] == [
+        {"timestamp": 1000.0, "value": 0.1},
+        {"timestamp": 1015.0, "value": 0.2},
+    ]
+    assert body["memory"] == [{"timestamp": 1000.0, "value": 1048576.0}]
+
+
+def test_metrics_bad_window_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    resp = client.get("/api/apps/my-app/metrics", params={"window": "nonsense"})
+    assert resp.status_code == 400
+    assert "Unsupported metrics window" in resp.json()["detail"]
+
+
+def test_metrics_prometheus_unreachable_returns_502(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+
+    def raise_unreachable(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        raise NexusError(what="Could not reach Prometheus.", why="Connection refused")
+
+    monkeypatch.setattr(prometheus, "query_range", raise_unreachable)
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 502
+    assert "Could not reach Prometheus" in resp.json()["detail"]
+
+
+def test_metrics_empty_when_app_has_no_series_yet(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A freshly deployed app with no traffic yet is empty data, not an error."""
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(prometheus, "query_range", lambda promql, window_seconds: [])
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    assert resp.json() == {"cpu": [], "memory": []}

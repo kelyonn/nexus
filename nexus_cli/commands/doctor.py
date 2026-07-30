@@ -8,6 +8,7 @@ report instead of one error per re-run.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -119,6 +120,30 @@ def _check_git(cfg: NexusConfig) -> DoctorCheck:
     return DoctorCheck("git", True, f"git OK — branch '{branch}', remote '{remote}'")
 
 
+def _check_registry(cfg: NexusConfig) -> DoctorCheck | None:
+    """Only runs when app.registry is set. Checks *presence*, never prints
+    values — a doctor report is exactly the kind of thing that ends up
+    pasted into a bug report or a chat message, and this project never puts
+    credentials in nexus.yaml in the first place (see core/registry.py); it
+    shouldn't leak them into a diagnostic report either.
+    """
+    if cfg.app.registry is None:
+        return None
+    missing = [
+        env_name
+        for env_name in (cfg.app.registry.usernameEnv, cfg.app.registry.passwordEnv)
+        if not os.environ.get(env_name)
+    ]
+    if missing:
+        return DoctorCheck(
+            "registry",
+            False,
+            f"Registry credential env var(s) not set: {', '.join(missing)}",
+            f"Set {' and '.join(missing)} in your shell before running `nexus deploy`.",
+        )
+    return DoctorCheck("registry", True, "Registry credential env vars are set")
+
+
 def _platform_status() -> list[tuple[str, str, bool]]:
     return [
         (label, namespace, helm.release_exists(release, namespace))
@@ -132,9 +157,7 @@ def doctor(
     ),
 ) -> None:
     """Diagnose the environment: tool installs, cluster access, RBAC, config, and git."""
-    output.step("")
-    output.step("Nexus Doctor")
-    output.step("-" * 43)
+    output.header("Nexus Doctor")
 
     checks = _preflight_checks()
     kubectl_check, helm_check, cluster_check = checks
@@ -146,6 +169,9 @@ def doctor(
     checks.append(config_check)
     if cfg is not None:
         checks.append(_check_git(cfg))
+        registry_check = _check_registry(cfg)
+        if registry_check is not None:
+            checks.append(registry_check)
 
     for c in checks:
         if c.passed:
@@ -160,9 +186,9 @@ def doctor(
         output.step("Platform components:")
         for label, namespace, installed in _platform_status():
             if installed:
-                output.step(f"  ✓ {label} installed (namespace: {namespace})")
+                output.check(True, f"{label} installed (namespace: {namespace})")
             else:
-                output.step(f"  – {label} not installed")
+                output.check(False, f"{label} not installed")
 
     output.step("")
     problems = [c for c in checks if not c.passed]

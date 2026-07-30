@@ -47,9 +47,7 @@ def status(
     name = cfg.app.name
     namespace = cfg.app.name
 
-    output.step("")
-    output.step(f"Nexus Status — {name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Status — {name}")
 
     if not kubectl.namespace_exists(namespace):
         output.warn(f"Namespace '{namespace}' not found — has `nexus deploy` been run?")
@@ -83,7 +81,7 @@ def status(
         output.step(f"  {pod.name}  {pod.phase}  restarts={pod.restarts}")
         if pod.problem in IMAGE_PULL_REASONS:
             output.warn(f"    {pod.problem}: image cannot be pulled.")
-            output.step(f"    Fix: {image_pull_fix()}")
+            output.step(f"    Fix: {image_pull_fix(cfg.app.imagePullPolicy)}")
         elif pod.problem in CRASH_REASONS:
             output.warn(f"    {pod.problem}: container is crashing on start.")
             output.step(f"    Fix: check `kubectl -n {namespace} logs {pod.name}` for the error.")

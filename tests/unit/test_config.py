@@ -44,6 +44,7 @@ def test_minimal_valid_config_loads_with_defaults(tmp_path: Path) -> None:
     assert cfg.platform.monitoring is True
     assert cfg.platform.chaos is False
     assert cfg.platform.chaosSchedule == "*/30 * * * *"
+    assert cfg.app.imagePullPolicy == "Always"  # default
 
 
 def test_full_valid_config_loads(tmp_path: Path) -> None:
@@ -177,6 +178,50 @@ def test_invalid_stack_value(tmp_path: Path) -> None:
         config.load(p)
 
 
+def test_metrics_path_unset_by_default(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.metricsPath is None
+    assert cfg.app.metricsPort is None
+    assert cfg.app.effective_metrics_port == cfg.app.port
+
+
+def test_metrics_path_and_port_set(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "/metrics", "metricsPort": 9100}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.metricsPath == "/metrics"
+    assert cfg.app.effective_metrics_port == 9100
+
+
+def test_metrics_path_defaults_port_to_app_port(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "/metrics"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.effective_metrics_port == cfg.app.port
+
+
+def test_invalid_metrics_path_missing_leading_slash(tmp_path: Path) -> None:
+    app = {**VALID_APP, "metricsPath": "metrics"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_valid_image_pull_policy_if_not_present(tmp_path: Path) -> None:
+    app = {**VALID_APP, "imagePullPolicy": "IfNotPresent"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.imagePullPolicy == "IfNotPresent"
+
+
+def test_invalid_image_pull_policy(tmp_path: Path) -> None:
+    app = {**VALID_APP, "imagePullPolicy": "Sometimes"}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
 def test_invalid_replicas_zero(tmp_path: Path) -> None:
     app = {**VALID_APP, "replicas": 0}
     p = _write(tmp_path, app, VALID_PLATFORM)
@@ -228,3 +273,50 @@ def test_unknown_field_rejected(tmp_path: Path) -> None:
     p = _write(tmp_path, app, VALID_PLATFORM)
     with pytest.raises(NexusError):
         config.load(p)
+
+
+# --- app.registry (imagePullSecrets automation) ---
+
+VALID_REGISTRY = {
+    "server": "ghcr.io",
+    "usernameEnv": "REGISTRY_USERNAME",
+    "passwordEnv": "REGISTRY_PASSWORD",
+}
+
+
+def test_registry_unset_by_default(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry is None
+
+
+def test_registry_valid_config_loads(tmp_path: Path) -> None:
+    app = {**VALID_APP, "registry": VALID_REGISTRY}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry is not None
+    assert cfg.app.registry.server == "ghcr.io"
+    assert cfg.app.registry.usernameEnv == "REGISTRY_USERNAME"
+    assert cfg.app.registry.passwordEnv == "REGISTRY_PASSWORD"
+
+
+@pytest.mark.parametrize("field", ["server", "usernameEnv", "passwordEnv"])
+def test_registry_empty_field_rejected(tmp_path: Path, field: str) -> None:
+    app = {**VALID_APP, "registry": {**VALID_REGISTRY, field: ""}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError) as exc_info:
+        config.load(p)
+    assert field in exc_info.value.why
+
+
+def test_registry_unknown_field_rejected(tmp_path: Path) -> None:
+    app = {**VALID_APP, "registry": {**VALID_REGISTRY, "password": "shouldnt-exist"}}
+    p = _write(tmp_path, app, VALID_PLATFORM)
+    with pytest.raises(NexusError):
+        config.load(p)
+
+
+def test_registry_secret_name_derived_from_app_name(tmp_path: Path) -> None:
+    p = _write(tmp_path, VALID_APP, VALID_PLATFORM)
+    cfg = config.load(p)
+    assert cfg.app.registry_secret_name == f"{cfg.app.name}-registry"

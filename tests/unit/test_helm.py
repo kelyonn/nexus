@@ -142,6 +142,36 @@ def test_upgrade_install_with_values(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "replicaCount=3" in captured["args"]
 
 
+def test_upgrade_install_with_chart_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_which(monkeypatch, True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> _FakeCompleted:
+        captured["args"] = args
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(helm.subprocess, "run", fake_run)
+    helm.upgrade_install("x", "chart", namespace="ns", chart_version="1.2.3")
+    assert "--version" in captured["args"]
+    assert "1.2.3" in captured["args"]
+
+
+def test_upgrade_install_without_chart_version_omits_flag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No chart_version -> no --version flag, not `--version None`."""
+    _patch_which(monkeypatch, True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(args: list[str], **kwargs: object) -> _FakeCompleted:
+        captured["args"] = args
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(helm.subprocess, "run", fake_run)
+    helm.upgrade_install("x", "chart", namespace="ns")
+    assert "--version" not in captured["args"]
+
+
 def test_upgrade_install_failure_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_which(monkeypatch, True)
     monkeypatch.setattr(
