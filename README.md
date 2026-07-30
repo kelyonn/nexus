@@ -2,41 +2,18 @@
 
 > **Bring your app. Nexus handles the platform.**
 
-Nexus is an open-source GitOps platform CLI that gives any developer
-production-grade Kubernetes infrastructure in minutes. Run `nexus init` in your
-project, fill in one YAML file, run `nexus deploy` — and get GitOps deployment
-(ArgoCD), self-healing, observability (Prometheus + Grafana), and optional
-chaos testing (Chaos Mesh) on **your own cluster**, without a DevOps team.
+Nexus is an open-source GitOps platform CLI. Point it at your app, and one
+config file (`nexus.yaml`) plus one command (`nexus deploy`) gets you:
 
-🌐 **[nexus site & docs](https://kelyonn.github.io/nexus/)** — install guide,
-command reference, `nexus.yaml` schema, architecture, and troubleshooting.
+- **GitOps deployment** via [ArgoCD](https://argo-cd.readthedocs.io/)
+- **Self-healing** — Kubernetes and ArgoCD both reconcile drift automatically
+- **Observability** via [Prometheus](https://prometheus.io/) + [Grafana](https://grafana.com/)
+- **Chaos testing** via [Chaos Mesh](https://chaos-mesh.org/) (optional)
 
-## Status
+All on your own cluster — no DevOps team required.
 
-✅ **Phase 1 + Phase 2 (the full CLI) are done.** All eleven commands —
-`init`, `deploy`, `status`, `watch`, `destroy`, `logs`, `chaos run`/`chaos
-schedule`, `doctor`, `upgrade`, `rollback`, and `dashboard` — exist and are
-verified against real clusters (Minikube and Kind): deploying an app,
-streaming logs and pod events, killing a pod and watching it recover,
-diagnosing a broken environment, bumping an image through GitOps, and rolling
-it back through `git revert` — proven to survive ArgoCD's self-heal, not just
-claimed to.
-
-✅ **The dashboard is built, including app-level metrics.** `nexus dashboard`
-launches a local control panel — an Overview grid of every Nexus-managed app,
-an App Detail view with pod age, CPU/memory sparklines, a chaos-trigger
-button, and Grafana panels (including request rate/error rate/P95 latency for
-apps that opt in via `metricsPath`), and a GitOps sync log with real commit
-messages. It's one process: the frontend ([dashboard/frontend](dashboard/frontend))
-builds to a static export that the backend ([dashboard/backend](dashboard/backend))
-serves directly, so `pip install nexus-gitops[dashboard]` works with no Node
-installed — see [The dashboard](#the-dashboard) below.
-
-Not yet published to PyPI/Homebrew — install from source for now (see
-[Try it](#try-it) below).
-
-The original manifest-based demo that inspired the CLI still lives — runnable —
-in [legacy/](legacy/README.md).
+📖 **[Docs](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
+478 tests, 99% core coverage · not yet on PyPI — install from source below
 
 ## What it looks like
 
@@ -63,10 +40,7 @@ $ nexus deploy
   ✓ nexus-app is live
 ```
 
-One config file (`nexus.yaml`), one command, and your app is deployed with
-GitOps, self-healing, metrics dashboards, and health probes — the setup that
-normally takes days of YAML wrangling. This is real, captured output, not a
-mockup — see [Try it](#try-it) to run it yourself.
+That's real, captured output — not a mockup. [Try it yourself](#try-it) below.
 
 ## Try it
 
@@ -91,10 +65,9 @@ nexus doctor             # environment diagnostics — every problem, with a fix
 nexus destroy              # type the app name to confirm
 ```
 
-`nexus deploy` is safe to run more than once — it skips components that are
-already installed and never duplicates resources. `nexus upgrade --image
-<tag>` and `nexus rollback` also exist but need a real git remote to push to
-(see [INSTALLATION.md](INSTALLATION.md) if you want to try those).
+`nexus deploy` is idempotent — safe to run more than once. `nexus upgrade
+--image <tag>` and `nexus rollback` also exist but need a real git remote
+(see [INSTALLATION.md](INSTALLATION.md) to try those).
 
 ### The dashboard
 
@@ -103,31 +76,30 @@ pip install -e ".[dashboard]"   # fastapi/uvicorn — not in the base install
 nexus dashboard                  # opens the browser, Ctrl+C to stop
 ```
 
-No Node/npm needed — the frontend ships as a static export baked into the
-package (a checkout needs one `npm run build` in `dashboard/frontend` first if
-you haven't already; see that directory's README). Needs at least one app
-deployed (`nexus deploy` above) to show anything on the Overview grid.
-`nexus dashboard` port-forwards Grafana and Prometheus for you automatically
-if it finds them on the cluster — no manual `kubectl port-forward` needed.
+A local control panel: an app grid, pod age and CPU/memory sparklines, a
+chaos-trigger button, Grafana panels, and a GitOps sync log with real commit
+messages. No Node/npm needed at install time — the frontend ships as a static
+export baked into the package (a checkout needs one `npm run build` in
+[dashboard/frontend](dashboard/frontend) first; see that directory's README).
+Needs at least one app deployed to show anything.
 
 ## Documentation
 
-The full docs live at **<https://kelyonn.github.io/nexus/>** — built from
-[docs_site/](docs_site) with MkDocs Material and deployed to GitHub Pages by
-[.github/workflows/docs.yml](.github/workflows/docs.yml) on every push to
-`main` that touches the site.
+Full docs, including the pieces above with more detail:
+**<https://kelyonn.github.io/nexus/>**
 
 | Page | What's in it |
 |---|---|
-| [Install & quickstart](https://kelyonn.github.io/nexus/install/) | Get a real app deployed to Minikube or Kind in under ten minutes |
+| [Install & quickstart](https://kelyonn.github.io/nexus/install/) | A real app on Minikube or Kind in under ten minutes |
 | [Command reference](https://kelyonn.github.io/nexus/commands/) | Every command and flag, straight from `--help` |
 | [nexus.yaml schema](https://kelyonn.github.io/nexus/schema/) | Every field, its type, default, and validation rule |
-| [Architecture](https://kelyonn.github.io/nexus/architecture/) | How the CLI, generated manifests, ArgoCD, and dashboard fit together |
+| [Architecture](https://kelyonn.github.io/nexus/architecture/) | How the CLI, manifests, ArgoCD, and dashboard fit together |
 | [Multiple environments](https://kelyonn.github.io/nexus/multi-environment/) | Staging and prod from separate `nexus.yaml` files |
 | [Troubleshooting](https://kelyonn.github.io/nexus/troubleshooting/) | Real problems hit during development, and their fixes |
 | [Cloud quick-starts](https://kelyonn.github.io/nexus/cloud/) | EKS/GKE/AKS notes (⚠️ not yet verified against real cloud clusters) |
 
-To work on the site locally:
+Built from [docs_site/](docs_site) with MkDocs Material, deployed to GitHub
+Pages on every push to `main` that touches the site. To work on it locally:
 
 ```bash
 pip install -e ".[docs]"
@@ -150,22 +122,20 @@ legacy/             The original hand-written GitOps demo (archived, read-only)
 
 ## The story
 
-This project started as a hand-built GitOps demo: a Flask app, Kubernetes
-manifests, ArgoCD, Prometheus rules, and Chaos Mesh experiments, all wired by
-hand (see [legacy/](legacy/README.md)). Building it revealed the problem worth
-solving: **that setup took days, and almost none of it was specific to the
-app.** Nexus is the tool that generates all of it from one config file — the
-demo is exactly the output `nexus deploy` will produce automatically.
+This started as a hand-built GitOps demo — a Flask app wired by hand to
+Kubernetes, ArgoCD, Prometheus, and Chaos Mesh (see
+[legacy/](legacy/README.md)). That setup took days, and almost none of it was
+specific to the app. Nexus is the tool that generates all of it from one
+config file.
 
 ## Contributing
 
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the
-pre-PR gate, and this project's scope boundaries. Development setup notes
-specific to a fresh install: [INSTALLATION.md](INSTALLATION.md). Bigger
-ideas that are real but deliberately not started yet — secret management,
-a real multi-environment schema, dashboard log streaming — are tracked in
-[FUTURE-SCOPE.md](FUTURE-SCOPE.md), with the design questions each one
-actually needs answered first.
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the pre-PR
+gate, and this project's scope boundaries. Fresh-install notes:
+[INSTALLATION.md](INSTALLATION.md). Bigger ideas that are real but
+deliberately not started yet are tracked in
+[FUTURE-SCOPE.md](FUTURE-SCOPE.md), with the design questions each one needs
+answered first.
 
 ## License
 
