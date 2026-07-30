@@ -25,7 +25,8 @@ def _run_follow(cfg: nexus_config.NexusConfig, tail: int) -> None:
         with print_lock:
             output.step(f"{pod} | {line}")
 
-    output.step(f"Following logs for '{cfg.app.name}' — Ctrl+C to stop.")
+    output.step("")
+    output.info(f"Following logs for '{cfg.app.name}' — Ctrl+C to stop.")
     try:
         pod_names = core_logs.follow_pod_logs(
             cfg.app.name, cfg.app.name, tail=tail, on_line=_print_line
