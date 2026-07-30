@@ -157,9 +157,7 @@ def doctor(
     ),
 ) -> None:
     """Diagnose the environment: tool installs, cluster access, RBAC, config, and git."""
-    output.step("")
-    output.step("Nexus Doctor")
-    output.step("-" * 43)
+    output.header("Nexus Doctor")
 
     checks = _preflight_checks()
     kubectl_check, helm_check, cluster_check = checks
@@ -188,9 +186,9 @@ def doctor(
         output.step("Platform components:")
         for label, namespace, installed in _platform_status():
             if installed:
-                output.step(f"  ✓ {label} installed (namespace: {namespace})")
+                output.check(True, f"{label} installed (namespace: {namespace})")
             else:
-                output.step(f"  – {label} not installed")
+                output.check(False, f"{label} not installed")
 
     output.step("")
     problems = [c for c in checks if not c.passed]
