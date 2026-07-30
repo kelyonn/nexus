@@ -286,16 +286,51 @@ All notable changes to Nexus are documented here. Format based on
   from the default `pytest` run (`tool.pytest.ini_options.testpaths` scoped to
   `tests/unit`) since it needs a live cluster and takes minutes, not seconds.
   All 10 tests live-verified against a real Kind cluster.
-- `.github/workflows/ci.yml` — ruff + mypy + unit tests (with an 80% core
-  coverage gate) on Python 3.10 and 3.13, plus two Kind e2e jobs (the main
-  integration suite, and a separately gated/`continue-on-error` chaos job).
-  A `dashboard-frontend` job now lints, type-checks, and production-builds
-  the Next.js app; `lint-and-unit` installs the `dashboard` extra so the
-  dashboard's own unit tests (mocked FastAPI `TestClient`, mocked
-  subprocess/network) run in CI instead of skipping.
+- `.github/workflows/ci.yml` — ruff + mypy + unit tests on Python 3.10 and
+  3.13, plus two Kind e2e jobs (the main integration suite, and a separately
+  gated/`continue-on-error` chaos job). A `dashboard-frontend` job now lints,
+  type-checks, and production-builds the Next.js app; `lint-and-unit`
+  installs the `dashboard` extra so the dashboard's own unit tests (mocked
+  FastAPI `TestClient`, mocked subprocess/network) run in CI instead of
+  skipping. The coverage gate now covers all of `nexus_cli` (not just
+  `nexus_cli/core`) at a measured 90% floor — `nexus_cli/commands/` (the
+  interactive confirmation logic in `deploy`/`destroy` included) was
+  previously outside the gate entirely despite having its own tests. Both
+  this job's quality checks and `release.yml`'s now run through the same
+  `scripts/gate.sh`.
 - `.github/workflows/release.yml` — builds and publishes to PyPI via Trusted
   Publishing (OIDC, no stored token) on a `v*` tag push; re-runs the full
-  quality gate first as a safety net.
+  quality gate first as a safety net. Now also: verifies the pushed tag
+  matches `nexus_cli.__version__` (and that `CHANGELOG.md` has a section for
+  it) before doing anything else; installs the `dashboard` extra so the
+  dashboard backend's own tests actually run on this path instead of
+  skipping; builds the sdist and wheel as independent, explicit artifacts;
+  asserts the dashboard frontend and the manifest templates both landed in
+  the built wheel (same check `ci.yml`'s `wheel-build` job already makes on
+  every PR, now also on the one build that's actually published); and
+  finishes with an install-from-wheel smoke test in a throwaway venv
+  (`nexus --version`, `nexus init`, a config that loads, the dashboard
+  package importing) before publishing. `scripts/gate.sh` centralizes the
+  ruff/mypy/pytest+coverage gate that CI, this workflow, and `CONTRIBUTING.md`
+  all now run identically — previously the release path installed fewer
+  extras and skipped the coverage floor entirely, so it was possible for a
+  release to publish something CI itself would have rejected.
+- `pyproject.toml`'s sdist target is now scoped explicitly
+  (`[tool.hatch.build.targets.sdist]`) instead of hatchling's default of
+  "every git-tracked file," which would have shipped `legacy/`, `tests/`,
+  `docs_site/`, and `.github/` inside a source distribution meant to build
+  one Python package. Verified by building the sdist, extracting it in
+  isolation, and building the wheel from that extraction — confirming the
+  scoped file list is actually sufficient (this is also what `pip install`
+  from a source distribution, or `python -m build`'s default wheel-from-sdist
+  path, does under the hood).
+- `hatch_build.py`'s frontend-build hook now skips entirely on an editable
+  install (`pip install -e .` never needed it — only `nexus_cli` is
+  live-linked by an editable install) instead of running a full `npm ci` +
+  build unconditionally, and a failing `npm` command now degrades to the
+  same "built without the dashboard, here's the fix" warning as `npm` being
+  absent, instead of aborting the whole `pip install` — matching what this
+  hook's own docstring already said it did.
 - `scripts/install.sh` — checks Python 3.10+, installs via `pipx` (preferred)
   or `pip --user`, verifies `nexus --version` after. Live-tested end-to-end
   against a locally built wheel (the real PyPI package doesn't exist until

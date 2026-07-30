@@ -22,15 +22,11 @@ jobs:
       - name: Install nexus + dev + dashboard dependencies
         run: pip install -e ".[dev,dashboard]"
 
-      - name: ruff
-        run: ruff check .
-
-      - name: mypy
-        run: mypy nexus_cli dashboard/backend
-
-      # PRD §12/§18: target 80%+ coverage on nexus_cli/core.
-      - name: unit tests (with coverage gate)
-        run: pytest -q --cov=nexus_cli.core --cov-report=term-missing --cov-fail-under=80
+      # scripts/gate.sh is the single source of truth for ruff/mypy/pytest
+      # scope and the coverage floor — release.yml runs the exact same
+      # script, so the two can't quietly diverge on what "passing" means.
+      - name: Quality gate (ruff, mypy, pytest + coverage)
+        run: ./scripts/gate.sh
 
   dashboard-frontend:
     name: dashboard frontend (lint + typecheck + build)
@@ -112,16 +108,22 @@ jobs:
       - name: Build wheel
         run: pip install build && python -m build --wheel
 
-      - name: Frontend static export landed in the wheel
+      - name: Frontend static export and templates landed in the wheel
         run: |
           python -c "
           import zipfile, glob, sys
           path = glob.glob('dist/*.whl')[0]
           names = zipfile.ZipFile(path).namelist()
-          required = 'dashboard/frontend/out/index.html'
-          assert required in names, f'{required} missing from {path}'
+          # dashboard/frontend/out/index.html: if this build silently degrades
+          # (see hatch_build.py), nexus dashboard breaks for anyone who pip
+          # installs the wheel. nexus_cli/templates/deployment.yaml.j2: if
+          # templates ever fall out of packages/force-include, every nexus
+          # deploy from this wheel breaks the same way, silently.
+          required = ['dashboard/frontend/out/index.html', 'nexus_cli/templates/deployment.yaml.j2']
+          for r in required:
+              assert r in names, f'{r} missing from {path}'
           assert not any('node_modules' in n for n in names), 'node_modules leaked into the wheel'
-          print(f'OK: {required} present, node_modules absent, {len(names)} files total')
+          print(f'OK: {required} all present, node_modules absent, {len(names)} files total')
           "
 
   integration:
