@@ -81,6 +81,7 @@ def _check_preconditions(cfg: NexusConfig) -> gitops.GitPreconditions:
 def _confirm_branch_mismatch(pre: gitops.GitPreconditions, cfg: NexusConfig, *, yes: bool) -> None:
     if pre.branch_matches:
         return
+    output.step("")
     output.warn(
         f"Current branch ('{pre.branch}') does not match platform.branch "
         f"('{cfg.platform.branch}')."
@@ -154,9 +155,7 @@ def rollback(
             output.print_error(no_parent_image)
             raise typer.Exit(code=1)
 
-    output.step("")
-    output.step(f"Nexus Rollback — {cfg.app.name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Rollback — {cfg.app.name}")
     output.step(f"Current image: {cfg.app.image}")
     output.step(f"Target image:  {target_image}")
 
