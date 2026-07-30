@@ -44,9 +44,7 @@ def upgrade(
         output.print_error(err)
         raise typer.Exit(code=1) from err
 
-    output.step("")
-    output.step(f"Nexus Upgrade — {cfg.app.name}")
-    output.step("-" * 43)
+    output.header(f"Nexus Upgrade — {cfg.app.name}")
     output.step(f"Current image: {cfg.app.image}")
     output.step(f"New image:     {image}")
 
@@ -80,6 +78,7 @@ def upgrade(
     # fail first (PRD says warn-and-confirm on mismatch, not block a preview
     # or a doomed command with a premature question).
     if not pre.branch_matches:
+        output.step("")
         output.warn(
             f"Current branch ('{pre.branch}') does not match platform.branch "
             f"('{cfg.platform.branch}')."
