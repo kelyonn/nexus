@@ -1,7 +1,13 @@
 name: CI
 
 on:
+  # Scoped to main (not every branch): a commit pushed to an open PR branch
+  # already triggers the full suite via pull_request below, so an
+  # unscoped push trigger ran this workflow — two Kind clusters, four npm
+  # builds — twice for the same commit. push: main covers post-merge
+  # commits (a direct push, or an admin merge without a PR).
   push:
+    branches: [main]
   pull_request:
 
 jobs:
@@ -22,15 +28,11 @@ jobs:
       - name: Install nexus + dev + dashboard dependencies
         run: pip install -e ".[dev,dashboard]"
 
-      - name: ruff
-        run: ruff check .
-
-      - name: mypy
-        run: mypy nexus_cli dashboard/backend
-
-      # PRD §12/§18: target 80%+ coverage on nexus_cli/core.
-      - name: unit tests (with coverage gate)
-        run: pytest -q --cov=nexus_cli.core --cov-report=term-missing --cov-fail-under=80
+      # scripts/gate.sh is the single source of truth for ruff/mypy/pytest
+      # scope and the coverage floor — release.yml runs the exact same
+      # script, so the two can't quietly diverge on what "passing" means.
+      - name: Quality gate (ruff, mypy, pytest + coverage)
+        run: ./scripts/gate.sh
 
   dashboard-frontend:
     name: dashboard frontend (lint + typecheck + build)
@@ -112,16 +114,22 @@ jobs:
       - name: Build wheel
         run: pip install build && python -m build --wheel
 
-      - name: Frontend static export landed in the wheel
+      - name: Frontend static export and templates landed in the wheel
         run: |
           python -c "
           import zipfile, glob, sys
           path = glob.glob('dist/*.whl')[0]
           names = zipfile.ZipFile(path).namelist()
-          required = 'dashboard/frontend/out/index.html'
-          assert required in names, f'{required} missing from {path}'
+          # dashboard/frontend/out/index.html: if this build silently degrades
+          # (see hatch_build.py), nexus dashboard breaks for anyone who pip
+          # installs the wheel. nexus_cli/templates/deployment.yaml.j2: if
+          # templates ever fall out of packages/force-include, every nexus
+          # deploy from this wheel breaks the same way, silently.
+          required = ['dashboard/frontend/out/index.html', 'nexus_cli/templates/deployment.yaml.j2']
+          for r in required:
+              assert r in names, f'{r} missing from {path}'
           assert not any('node_modules' in n for n in names), 'node_modules leaked into the wheel'
-          print(f'OK: {required} present, node_modules absent, {len(names)} files total')
+          print(f'OK: {required} all present, node_modules absent, {len(names)} files total')
           "
 
   integration:
@@ -155,9 +163,17 @@ jobs:
     name: Kind e2e (chaos — allowed to fail)
     runs-on: ubuntu-latest
     needs: lint-and-unit
-    # Chaos Mesh install + admission-webhook readiness on Kind can be flaky
-    # (see docs/IMPLEMENTATION-PLAN.md's webhook-race finding) — gated so a
-    # transient infra hiccup here never blocks the merge-critical jobs above.
+    # The specific webhook-not-ready race this used to guard against
+    # (docs/IMPLEMENTATION-PLAN.md's finding) is now handled at the command
+    # level — core/chaos.py's with_webhook_retry() retries on that exact
+    # error text, unit-tested against it directly (retry-then-succeed,
+    # give-up-after-deadline, don't-retry-other-errors). continue-on-error
+    # stays regardless: Chaos Mesh's own Helm install + CRD/webhook
+    # registration settling on Kind's shared CI runners is a lower-level,
+    # infra-timing concern that retry can't reach, and it should never block
+    # the merge-critical jobs above. A weekly, non-muted run
+    # (chaos-canary.yml) exists specifically so a persistent regression here
+    # doesn't stay silently invisible just because PRs never see it fail.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4

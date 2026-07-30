@@ -8,8 +8,14 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: {{ platform.repoURL }}
-    targetRevision: {{ platform.branch }}
+    # `| tojson`: repoURL/branch are already schema-validated to safe
+    # charsets (config.py), but this is the manifest that's registered
+    # directly via `kubectl apply` from unvalidated-at-render-time text — an
+    # unquoted `branch` here was a verified way to rewrite `spec.source.path`
+    # and other sibling keys before the schema fix landed. See
+    # docs/INTERVIEW-BRIEF.md.
+    repoURL: {{ platform.repoURL | tojson }}
+    targetRevision: {{ platform.branch | tojson }}
     path: k8s
   destination:
     server: https://kubernetes.default.svc

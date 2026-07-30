@@ -52,6 +52,7 @@ nav:
   - nexus.yaml schema: schema.md
   - Architecture: architecture.md
   - Multiple environments: multi-environment.md
+  - Exposing your app: exposing-your-app.md
   - Troubleshooting: troubleshooting.md
   - Cloud quick-starts:
       - Overview: cloud/index.md

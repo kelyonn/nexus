@@ -29,6 +29,12 @@ pip install -e ".[dev,dashboard]"
 If you're touching the dashboard frontend, also see
 `dashboard/frontend/README.md` for its two build modes.
 
+`pip install -e .` (an editable install) skips the dashboard frontend build
+entirely — it only ever needs `nexus_cli` live-linked, so there's nothing to
+build. A **standard** (non-editable) install still builds it, and needs
+Node; if you don't have Node and aren't touching the dashboard,
+`NEXUS_SKIP_DASHBOARD_BUILD=1 pip install .` skips that step explicitly.
+
 **A real footgun, found the hard way:** `pip install -e .` only keeps
 `nexus_cli` live-linked to source. `dashboard/` is added to the wheel via
 `force-include` (see `pyproject.toml`'s comment) rather than `packages`,
@@ -42,12 +48,11 @@ testing — or just re-run `pip install -e ".[dev,dashboard]"`.
 
 ## Before opening a PR
 
-Run the same gate CI runs:
+Run the same gate CI (and the release workflow) runs — one script, so none
+of the three can quietly diverge on what "passing" means:
 
 ```bash
-ruff check .
-mypy nexus_cli dashboard/backend
-pytest -q --cov=nexus_cli.core --cov-report=term-missing --cov-fail-under=80
+./scripts/gate.sh
 ```
 
 If you touched `dashboard/frontend/`:

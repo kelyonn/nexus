@@ -1,0 +1,42 @@
+name: Chaos canary
+
+# ci.yml's integration-chaos job runs `continue-on-error: true` on every PR,
+# by design (see its comment) — Chaos Mesh's Helm install settling on Kind's
+# shared CI runners is infra-timing, not something a retry inside Nexus's
+# own code can fix, and it must never block a merge. But `continue-on-error`
+# also means a *persistent*, real regression in the chaos path would fail
+# quietly forever — green checkmark, nobody looks twice. This workflow runs
+# the identical test on a schedule, without the escape hatch, specifically
+# so that failure mode has somewhere to surface.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # weekly, Monday — arbitrary day, avoids the
+      # top-of-hour/day pile-up GitHub's own docs warn scheduled jobs into
+  workflow_dispatch: {} # manual trigger, for checking after a real chaos.py change
+
+jobs:
+  chaos-canary:
+    name: Kind e2e (chaos, not muted)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install nexus + dev dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Set up helm
+        uses: azure/setup-helm@v4
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: nexus-chaos-canary
+
+      - name: Chaos integration test
+        run: pytest tests/integration/test_chaos.py -m chaos -v

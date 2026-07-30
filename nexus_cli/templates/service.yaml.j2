@@ -20,4 +20,4 @@ spec:
       port: {{ app.effective_metrics_port }}
       targetPort: {{ app.effective_metrics_port }}
 {% endif %}
-  type: LoadBalancer
+  type: {{ app.serviceType | tojson }}

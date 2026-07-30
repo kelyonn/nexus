@@ -58,9 +58,11 @@ the mapping.
 | Template | Renders when |
 |---|---|
 | `namespace.yaml.j2` | always |
+| `serviceaccount.yaml.j2` | always |
 | `deployment.yaml.j2` | always |
 | `service.yaml.j2` | always |
 | `argocd-app.yaml.j2` | always |
+| `pdb.yaml.j2` | `app.replicas >= 2` |
 | `servicemonitor.yaml.j2` | `platform.monitoring` and `app.metricsPath` set |
 | `prometheus-rules.yaml.j2` | `platform.monitoring` |
 | `grafana-dashboard.yaml.j2` | `platform.monitoring` |

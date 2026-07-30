@@ -18,10 +18,11 @@ import yaml
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from nexus_cli.core.config import NexusConfig
+from nexus_cli.core.output import NexusError
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
-_ALWAYS_ON = ("namespace", "deployment", "service", "argocd-app")
+_ALWAYS_ON = ("namespace", "serviceaccount", "deployment", "service", "argocd-app")
 _MONITORING = ("prometheus-rules", "grafana-dashboard")
 _CHAOS = ("podchaos",)
 
@@ -39,6 +40,13 @@ def _environment() -> Environment:
 def template_names(config: NexusConfig) -> list[str]:
     """The template stems that apply to this config, in render order."""
     names = list(_ALWAYS_ON)
+    # A PDB only protects something that has more than one replica to
+    # protect — at replicas: 1, maxUnavailable: 1 blocks every voluntary
+    # disruption (node drain, cordon) forever instead of preserving
+    # availability, so it's omitted rather than emitted there. See
+    # pdb.yaml.j2's own comment for the full reasoning.
+    if config.app.replicas >= 2:
+        names.append("pdb")
     if config.platform.monitoring:
         names += _MONITORING
         # Opt-in on top of platform.monitoring: a ServiceMonitor only makes
@@ -52,6 +60,34 @@ def template_names(config: NexusConfig) -> list[str]:
     return names
 
 
+def _render_and_verify(env: Environment, name: str, context: dict) -> str:
+    """Render one template and confirm the result is at least parseable YAML.
+
+    This is defense in depth, not the fix: schema validation (config.py) and
+    `| tojson` escaping (the templates themselves) are what actually stop a
+    hostile config value from restructuring a generated manifest — that kind
+    of injection produces *valid* YAML with extra/rewritten keys, which
+    parses fine and isn't caught here. What this layer catches is malformed
+    YAML (e.g. an unescaped quote breaking a scalar) reaching `kubectl
+    apply`, which would otherwise surface as a confusing parser error
+    pointing at a file the user never directly wrote. See
+    docs/INTERVIEW-BRIEF.md.
+    """
+    text = env.get_template(f"{name}.yaml.j2").render(**context)
+    try:
+        parse_documents(text)
+    except yaml.YAMLError as exc:
+        raise NexusError(
+            what=f"Generated manifest '{name}.yaml.j2' is not valid YAML.",
+            why=str(exc),
+            fix=(
+                "This is a bug in Nexus's template rendering, not your nexus.yaml. "
+                "Please file an issue with your (redacted) config."
+            ),
+        ) from exc
+    return text
+
+
 def render_manifests(config: NexusConfig) -> dict[str, str]:
     """Render every applicable template for this config.
 
@@ -61,7 +97,7 @@ def render_manifests(config: NexusConfig) -> dict[str, str]:
     context = {"app": config.app, "platform": config.platform}
     rendered = {}
     for name in template_names(config):
-        rendered[name] = env.get_template(f"{name}.yaml.j2").render(**context)
+        rendered[name] = _render_and_verify(env, name, context)
     return rendered
 
 
@@ -74,7 +110,7 @@ def render_template(name: str, config: NexusConfig) -> str:
     """
     env = _environment()
     context = {"app": config.app, "platform": config.platform}
-    return env.get_template(f"{name}.yaml.j2").render(**context)
+    return _render_and_verify(env, name, context)
 
 
 def parse_documents(text: str) -> list[dict]:

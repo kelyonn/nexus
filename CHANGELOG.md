@@ -150,6 +150,22 @@ All notable changes to Nexus are documented here. Format based on
   found while touching it), then stops before prompting. A second, cheaper
   safety net on top of the existing typed-name confirmation for the most
   destructive command in the CLI.
+- `app.secrets` in `nexus.yaml`: real app secrets (a DB password, an API
+  key), modeled directly on `app.registry`'s existing pattern — each entry
+  names an environment variable to read the actual value from at deploy
+  time, never the value itself. `nexus deploy` creates/updates the resulting
+  Secret imperatively via `kubectl` (short-lived 0600 temp files, one per
+  key, never a `--from-literal=...` argument) and never writes it to `k8s/`.
+  The Deployment references it via `valueFrom.secretKeyRef`. Applied and
+  removed alongside the app's namespace, same as the registry Secret.
+  `nexus doctor` checks the named env vars are set (never prints their
+  values). `app.env` additionally now rejects values that look
+  credential-shaped (a deny-list on the field name plus a couple of
+  value patterns) with a `plaintext: true` escape hatch for false positives
+  — nudging real secrets toward `app.secrets` instead of `nexus.yaml`'s
+  free-text `env` list, which gets committed to git. See
+  `docs_site/schema.md`'s `secrets` section and `FUTURE-SCOPE.md` §1 for
+  what's still open (encrypting a secret at rest in git itself).
 - `nexus logs --follow` / `-f`: streams every matching pod's logs live,
   concurrently, prefixed by pod name like the existing snapshot output —
   the same `kubectl logs -f` mental model `nexus watch` already uses for
@@ -161,6 +177,23 @@ All notable changes to Nexus are documented here. Format based on
   the shell itself ignoring `SIGINT` for background jobs, not this code —
   re-tested with a wrapper that resets `SIGINT` to its default disposition
   first, matching a real terminal, and it stops immediately as intended.
+- Pod hardening on the generated Deployment: a dedicated per-app
+  `ServiceAccount` (`serviceaccount.yaml.j2`) with `automountServiceAccountToken:
+  false` rather than falling back to the namespace's `default` one;
+  `allowPrivilegeEscalation: false` and dropping all Linux capabilities on
+  every container (no ordinary app needs either, so these are unconditional,
+  not configurable); a `startupProbe` so a slow-booting container gets up to
+  150s before readiness/liveness start counting against it; and
+  `topologySpreadConstraints` (`ScheduleAnyway`, so it helps across multiple
+  nodes without stranding a replica `Pending` forever on the single-node
+  Kind/Minikube clusters this project targets). A new opt-in `app.security`
+  block (`runAsNonRoot`, `runAsUser`, `readOnlyRootFilesystem`) covers the
+  hardening that depends on the image itself and so can't be forced by
+  default — `nexus init` sets `runAsNonRoot: true` for every newly generated
+  `nexus.yaml`. Apps with `replicas >= 2` also get a `PodDisruptionBudget`
+  (`maxUnavailable: 1`), omitted at `replicas: 1` where it would block every
+  voluntary disruption instead of protecting anything. See
+  `docs_site/schema.md`'s `security` section.
 
 ### Fixed
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
@@ -190,6 +223,21 @@ All notable changes to Nexus are documented here. Format based on
   `app.imagePullPolicy` (`Always | IfNotPresent | Never`, default `Always`) to
   `nexus.yaml`, templated it, and updated the fix message to mention setting
   `IfNotPresent` alongside the load command.
+- `nexus deploy` now applies the Namespace and both kinds of Secret
+  (imagePullSecret, and the new `app.secrets` Secret) before the Deployment
+  that references them, instead of after — the previous ordering meant a
+  fresh `nexus deploy` briefly applied a Deployment referencing a Secret
+  that didn't exist yet (self-correcting once kubelet retried, but a real
+  race, and now closed for both Secret kinds together).
+- Values interpolated into generated manifests (`app.env[].value`,
+  `app.env[].name`, `platform.branch`, `app.healthPath`, `app.metricsPath`)
+  are now schema-validated to a safe charset and/or JSON-escaped (`| tojson`)
+  at the template layer, and every rendered manifest is parsed before being
+  returned. Previously an env value containing a bare double quote produced
+  invalid YAML — a real bug, not just a hardening concern, since it's a
+  completely ordinary value to want to set. `core/render.py` also gained a
+  parse-and-verify step so malformed template output now fails as a clear
+  `NexusError` instead of a raw parser error reaching `kubectl apply`.
 
 ### Changed
 - The CLI's terminal output now draws from one shared palette instead of each
@@ -238,17 +286,101 @@ All notable changes to Nexus are documented here. Format based on
   from the default `pytest` run (`tool.pytest.ini_options.testpaths` scoped to
   `tests/unit`) since it needs a live cluster and takes minutes, not seconds.
   All 10 tests live-verified against a real Kind cluster.
-- `.github/workflows/ci.yml` — ruff + mypy + unit tests (with an 80% core
-  coverage gate) on Python 3.10 and 3.13, plus two Kind e2e jobs (the main
-  integration suite, and a separately gated/`continue-on-error` chaos job).
-  A `dashboard-frontend` job now lints, type-checks, and production-builds
-  the Next.js app; `lint-and-unit` installs the `dashboard` extra so the
-  dashboard's own unit tests (mocked FastAPI `TestClient`, mocked
-  subprocess/network) run in CI instead of skipping.
+- `.github/workflows/ci.yml` — ruff + mypy + unit tests on Python 3.10 and
+  3.13, plus two Kind e2e jobs (the main integration suite, and a separately
+  gated/`continue-on-error` chaos job). A `dashboard-frontend` job now lints,
+  type-checks, and production-builds the Next.js app; `lint-and-unit`
+  installs the `dashboard` extra so the dashboard's own unit tests (mocked
+  FastAPI `TestClient`, mocked subprocess/network) run in CI instead of
+  skipping. The coverage gate now covers all of `nexus_cli` (not just
+  `nexus_cli/core`) at a measured 90% floor — `nexus_cli/commands/` (the
+  interactive confirmation logic in `deploy`/`destroy` included) was
+  previously outside the gate entirely despite having its own tests. Both
+  this job's quality checks and `release.yml`'s now run through the same
+  `scripts/gate.sh`.
 - `.github/workflows/release.yml` — builds and publishes to PyPI via Trusted
   Publishing (OIDC, no stored token) on a `v*` tag push; re-runs the full
-  quality gate first as a safety net.
+  quality gate first as a safety net. Now also: verifies the pushed tag
+  matches `nexus_cli.__version__` (and that `CHANGELOG.md` has a section for
+  it) before doing anything else; installs the `dashboard` extra so the
+  dashboard backend's own tests actually run on this path instead of
+  skipping; builds the sdist and wheel as independent, explicit artifacts;
+  asserts the dashboard frontend and the manifest templates both landed in
+  the built wheel (same check `ci.yml`'s `wheel-build` job already makes on
+  every PR, now also on the one build that's actually published); and
+  finishes with an install-from-wheel smoke test in a throwaway venv
+  (`nexus --version`, `nexus init`, a config that loads, the dashboard
+  package importing) before publishing. `scripts/gate.sh` centralizes the
+  ruff/mypy/pytest+coverage gate that CI, this workflow, and `CONTRIBUTING.md`
+  all now run identically — previously the release path installed fewer
+  extras and skipped the coverage floor entirely, so it was possible for a
+  release to publish something CI itself would have rejected.
+- `pyproject.toml`'s sdist target is now scoped explicitly
+  (`[tool.hatch.build.targets.sdist]`) instead of hatchling's default of
+  "every git-tracked file," which would have shipped `legacy/`, `tests/`,
+  `docs_site/`, and `.github/` inside a source distribution meant to build
+  one Python package. Verified by building the sdist, extracting it in
+  isolation, and building the wheel from that extraction — confirming the
+  scoped file list is actually sufficient (this is also what `pip install`
+  from a source distribution, or `python -m build`'s default wheel-from-sdist
+  path, does under the hood).
+- `hatch_build.py`'s frontend-build hook now skips entirely on an editable
+  install (`pip install -e .` never needed it — only `nexus_cli` is
+  live-linked by an editable install) instead of running a full `npm ci` +
+  build unconditionally, and a failing `npm` command now degrades to the
+  same "built without the dashboard, here's the fix" warning as `npm` being
+  absent, instead of aborting the whole `pip install` — matching what this
+  hook's own docstring already said it did.
 - `scripts/install.sh` — checks Python 3.10+, installs via `pipx` (preferred)
   or `pip --user`, verifies `nexus --version` after. Live-tested end-to-end
   against a locally built wheel (the real PyPI package doesn't exist until
   the first tagged release).
+- `tests/integration/conftest.py`'s tolerance for a non-zero `nexus deploy`
+  exit (needed because every test's `scratch_repo` has no git remote, so
+  ArgoCD's `sync` can never reach `Synced`) now parses the CLI's own
+  reported `sync`/`health` status instead of matching on the error message's
+  substring alone. Previously *any* cause of the "did not become Synced +
+  Healthy" timeout was tolerated — including a genuinely `Degraded` app,
+  which would have passed the suite silently. Now only `sync` never reaching
+  `Synced` is tolerated; a `Synced`-but-unhealthy result fails the test.
+  Covered by a new fast unit test (`tests/unit/test_integration_conftest.py`)
+  so this parsing logic doesn't need a live cluster to verify.
+- `ci.yml`'s `push` trigger is now scoped to `main` — previously unscoped,
+  so every commit to a branch with an open PR ran the full suite (two Kind
+  clusters, four npm builds) twice: once via `push`, once via `pull_request`.
+- Added `chaos-canary.yml`, a weekly scheduled (and manually triggerable) run
+  of the chaos integration test *without* `continue-on-error`. The PR-facing
+  `integration-chaos` job stays soft-gated on purpose (Chaos Mesh's Helm
+  install settling on Kind's shared CI runners is infra-timing that must
+  never block a merge), which also means a persistent real regression there
+  would fail silently forever with no other signal — this gives it one.
+- `app.serviceType` (`ClusterIP` \| `NodePort` \| `LoadBalancer`, default
+  `ClusterIP`) — the generated Service defaulted to `LoadBalancer` (the
+  legacy demo's value), which sits `<pending>` forever on a bare Kind/
+  Minikube cluster and provisions a real, billed load balancer per app on a
+  real cloud one, despite `nexus deploy`'s own success message always
+  pointing users at `kubectl port-forward` — which works against any Service
+  type. `LoadBalancer`/`NodePort` are still available, just no longer the
+  default. Live-verified: applied the regenerated Service to a running app
+  and confirmed `port-forward` still reaches it (HTTP 200) under `ClusterIP`.
+- New docs page, [Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/):
+  the three actual options for reaching a deployed app (port-forward,
+  `serviceType`, bring-your-own Ingress + cert-manager with a worked
+  example) and why there's no Ingress template — a documented interop
+  boundary instead of an unexplained gap.
+- The three app-level Grafana panels tied to `prometheus-flask-exporter`'s
+  metric names (request rate, error rate, P95 latency) are now also gated on
+  `app.stack == "flask"`, not just `app.metricsPath` being set — a
+  `node`/`generic` app with `metricsPath` configured still gets scraped (the
+  ServiceMonitor is stack-agnostic) but no longer gets three permanently
+  empty panels querying metric names its own exporter never emits.
+- `FUTURE-SCOPE.md` gained two new entries: HPA support (blocked on a real
+  design decision about how it should coexist with ArgoCD's `selfHeal`
+  reverting `spec.replicas` — not just "not built yet"), and a per-app
+  `app.namespace` override (deliberately not planned — the current
+  one-app-one-namespace invariant is what makes `nexus destroy`'s
+  whole-namespace deletion safe).
+- `starlette>=1.0` added alongside `httpx2` in the `dev` extra — `httpx2` is
+  real, not a typo (already documented in `FUTURE-SCOPE.md`), but the floor
+  that makes it actually get used by FastAPI's `TestClient` was previously
+  undeclared.

@@ -175,6 +175,45 @@ def test_destroy_dry_run_omits_registry_secret_when_unset(
     assert "imagePullSecret" not in result.output
 
 
+VALID_YAML_WITH_APP_SECRETS = """
+app:
+  name: my-app
+  image: myrepo/app:latest
+  port: 8080
+  healthPath: /health
+  secrets:
+    - name: DB_PASSWORD
+      valueEnv: APP_DB_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def test_destroy_dry_run_lists_app_secret_when_configured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "nexus.yaml").write_text(VALID_YAML_WITH_APP_SECRETS)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Secret:            my-app-secrets" in result.output
+
+
+def test_destroy_dry_run_omits_app_secret_when_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+
+    result = runner.invoke(app, ["destroy", "--dry-run"])
+    assert result.exit_code == 0, result.output
+    assert "Secret:" not in result.output
+
+
 def test_destroy_dry_run_preflight_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

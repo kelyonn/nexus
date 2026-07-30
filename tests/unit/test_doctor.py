@@ -253,6 +253,102 @@ def test_doctor_registry_credentials_present_passes(
     assert "hunter2" not in result.output  # never echo the actual credential
 
 
+VALID_YAML_WITH_APP_SECRETS = """
+app:
+  name: my-app
+  image: myrepo/app:latest
+  port: 8080
+  healthPath: /health
+  secrets:
+    - name: DB_PASSWORD
+      valueEnv: APP_DB_PASSWORD
+platform:
+  repoURL: https://github.com/user/repo.git
+  branch: main
+"""
+
+
+def _write_config_with_app_secrets(tmp_path: Path) -> Path:
+    p = tmp_path / "nexus.yaml"
+    p.write_text(VALID_YAML_WITH_APP_SECRETS)
+    return p
+
+
+def test_doctor_no_secrets_configured_reports_nothing_about_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """app.secrets unset (the default/most common case) shouldn't run the
+    app.secrets-specific check at all — same reasoning as the registry
+    check. (The RBAC line legitimately mentions "secrets" generically, since
+    that permission is needed for app.registry too — this checks the
+    secrets-specific DoctorCheck line, not the word "secrets" anywhere.)
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "app.secrets env vars" not in result.output
+    assert "Secret env var(s)" not in result.output
+
+
+def test_doctor_reports_missing_secret_env_vars(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config_with_app_secrets(tmp_path)
+    monkeypatch.delenv("APP_DB_PASSWORD", raising=False)
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 1
+    assert "APP_DB_PASSWORD" in result.output
+
+
+def test_doctor_secret_env_vars_present_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_config_with_app_secrets(tmp_path)
+    monkeypatch.setenv("APP_DB_PASSWORD", "hunter2")
+    _healthy_preflight(monkeypatch)
+    monkeypatch.setattr(doctor_module.kubectl, "can_i", lambda *a, **k: True)
+    monkeypatch.setattr(doctor_module.git, "is_repo", lambda: True)
+    monkeypatch.setattr(doctor_module.git, "current_branch", lambda: "main")
+    monkeypatch.setattr(doctor_module.git, "default_remote", lambda: "origin")
+    monkeypatch.setattr(doctor_module.helm, "release_exists", lambda *a, **k: True)
+
+    result = runner.invoke(app, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "Everything looks good" in result.output
+    assert "hunter2" not in result.output  # never echo the actual secret value
+
+
+def test_doctor_rbac_check_mentions_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
+    """app.registry and app.secrets both need `create secrets` RBAC — the
+    check should name it, not just namespaces/deployments.
+    """
+    monkeypatch.setattr(
+        doctor_module.kubectl,
+        "can_i",
+        lambda verb, resource, **k: not (verb == "create" and resource == "secrets"),
+    )
+    check = doctor_module._check_rbac()
+    assert check.passed is False
+    assert "create secrets" in check.detail
+
+
 def test_doctor_platform_components_not_installed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

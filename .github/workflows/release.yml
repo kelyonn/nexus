@@ -9,6 +9,15 @@ name: Release
 # `nexus-gitops` project must have a trusted publisher configured pointing at
 # this repo + workflow file + the `pypi` environment below. See
 # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
+#
+# Every step here exists because of something that was verified broken before
+# this workflow was hardened: the tag was never checked against the package
+# version (a first publish would have shipped a PEP 440 pre-release that
+# `pip install` can't resolve), the wheel was built with no Node available and
+# no check that the dashboard frontend actually landed in it, and this gate
+# was weaker than CI's own — installing fewer extras (dashboard tests
+# silently skipped) and skipping the coverage floor entirely, on the one path
+# that actually reaches PyPI. See docs/INTERVIEW-BRIEF.md.
 
 on:
   push:
@@ -29,24 +38,97 @@ jobs:
         with:
           python-version: "3.13"
 
-      # Safety net: a bad tag pushed outside the normal CI-gated PR flow
-      # must not still make it onto PyPI.
-      - name: Install dev dependencies
-        run: pip install -e ".[dev]"
+      # Fails fast, before installing anything: a tag that doesn't match
+      # nexus_cli.__version__ must never reach PyPI. Exact string equality
+      # (not just "same version, ignoring pre-release suffix") is deliberate
+      # — it's what would have caught the actual gap found in this repo: a
+      # `v0.1.0` tag published while __version__ was still "0.1.0.dev0", a
+      # PEP 440 pre-release `pip install nexus-gitops` silently refuses to
+      # resolve without --pre. Also checks CHANGELOG.md has a section for the
+      # version being released, since "what changed in this release" living
+      # nowhere is its own kind of broken publish.
+      - name: Tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(python3 -c 'import re; print(re.search(r"__version__ = \"(.+)\"", open("nexus_cli/__init__.py").read()).group(1))')"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match nexus_cli.__version__ ($PKG_VERSION)."
+            echo "::error::Update nexus_cli/__init__.py to match the tag (or re-tag to match the version), then re-push."
+            exit 1
+          fi
+          if ! grep -q "\[$PKG_VERSION\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no [$PKG_VERSION] section. Move [Unreleased] to [$PKG_VERSION] - <date> and commit before tagging."
+            exit 1
+          fi
+          echo "OK: tag ${GITHUB_REF_NAME} matches nexus_cli.__version__ ($PKG_VERSION), CHANGELOG.md has a section for it."
 
-      - name: ruff
-        run: ruff check .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: dashboard/frontend/package-lock.json
 
-      - name: mypy
-        run: mypy nexus_cli
+      # `.[dev,dashboard]`, not just `.[dev]` — the previous `.[dev]`-only
+      # install meant `fastapi` was absent, so the dashboard backend's own
+      # tests silently no-op'd via `pytest.importorskip("fastapi")` on every
+      # release, never actually running on the path that reaches PyPI.
+      - name: Install nexus + dev + dashboard dependencies
+        run: pip install -e ".[dev,dashboard]"
 
-      - name: unit tests
-        run: pytest -q
+      # Same script CI's lint-and-unit job runs — see scripts/gate.sh's own
+      # comment for what independently drifting apart cost before this.
+      - name: Quality gate (ruff, mypy, pytest + coverage)
+        run: ./scripts/gate.sh
 
+      # --sdist --wheel (not bare `python -m build`, which builds the wheel
+      # from the *extracted sdist* rather than this checkout) — both
+      # artifacts are built explicitly and independently, so neither one's
+      # correctness depends on what did or didn't make it into the other.
       - name: Build sdist + wheel
         run: |
           pip install build
-          python -m build
+          python -m build --sdist --wheel
+
+      # Same assertion ci.yml's wheel-build job already makes on every PR —
+      # ported here because that job doesn't run on this workflow, and this
+      # is the one build whose output actually gets published.
+      - name: Frontend static export and templates landed in the wheel
+        run: |
+          python -c "
+          import zipfile, glob
+          path = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(path).namelist()
+          required = ['dashboard/frontend/out/index.html', 'nexus_cli/templates/deployment.yaml.j2']
+          for r in required:
+              assert r in names, f'{r} missing from {path}'
+          assert not any('node_modules' in n for n in names), 'node_modules leaked into the wheel'
+          print(f'OK: {required} all present, node_modules absent, {len(names)} files total')
+          "
+
+      # The real proof that what's about to be published actually installs
+      # and runs — not just that it contains the right files. Fresh venv,
+      # install from the built wheel (not `pip install -e .`, which never
+      # exercises this artifact at all), exercise the two things a first-time
+      # user would hit immediately: the CLI itself, and (with the dashboard
+      # extra) that the backend package actually imports.
+      - name: Install smoke test
+        run: |
+          python3 -m venv /tmp/nexus-smoke
+          /tmp/nexus-smoke/bin/pip install "$(ls dist/*.whl)[dashboard]"
+          INSTALLED_VERSION="$(/tmp/nexus-smoke/bin/nexus --version)"
+          echo "Installed: $INSTALLED_VERSION"
+          echo "$INSTALLED_VERSION" | grep -q "${GITHUB_REF_NAME#v}" || {
+            echo "::error::nexus --version ($INSTALLED_VERSION) does not mention ${GITHUB_REF_NAME#v}"
+            exit 1
+          }
+          cd /tmp && mkdir nexus-smoke-init && cd nexus-smoke-init
+          /tmp/nexus-smoke/bin/nexus init --stack generic <<< $'8080\n/health\nmyrepo/app:latest\nhttps://github.com/example/repo.git\nmain\n'
+          /tmp/nexus-smoke/bin/python -c "
+          from nexus_cli.core import config
+          config.load('nexus.yaml')
+          print('OK: nexus init produced a config that loads cleanly')
+          "
+          /tmp/nexus-smoke/bin/python -c "import dashboard.backend.main; print('OK: dashboard.backend.main imports')"
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

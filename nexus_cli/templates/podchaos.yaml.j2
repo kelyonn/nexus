@@ -12,7 +12,11 @@ metadata:
     app: {{ app.name }}
     managed-by: nexus
 spec:
-  schedule: "{{ platform.chaosSchedule }}"
+  # chaosSchedule is already restricted to a cron-field charset that can't
+  # contain quotes/newlines (config.py's _cron validator), so `| tojson`
+  # here is pure defense in depth, applied for consistency with every other
+  # field this project interpolates into generated manifests.
+  schedule: {{ platform.chaosSchedule | tojson }}
   historyLimit: 3
   concurrencyPolicy: Forbid
   type: PodChaos
