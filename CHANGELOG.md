@@ -354,3 +354,33 @@ All notable changes to Nexus are documented here. Format based on
   install settling on Kind's shared CI runners is infra-timing that must
   never block a merge), which also means a persistent real regression there
   would fail silently forever with no other signal — this gives it one.
+- `app.serviceType` (`ClusterIP` \| `NodePort` \| `LoadBalancer`, default
+  `ClusterIP`) — the generated Service defaulted to `LoadBalancer` (the
+  legacy demo's value), which sits `<pending>` forever on a bare Kind/
+  Minikube cluster and provisions a real, billed load balancer per app on a
+  real cloud one, despite `nexus deploy`'s own success message always
+  pointing users at `kubectl port-forward` — which works against any Service
+  type. `LoadBalancer`/`NodePort` are still available, just no longer the
+  default. Live-verified: applied the regenerated Service to a running app
+  and confirmed `port-forward` still reaches it (HTTP 200) under `ClusterIP`.
+- New docs page, [Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/):
+  the three actual options for reaching a deployed app (port-forward,
+  `serviceType`, bring-your-own Ingress + cert-manager with a worked
+  example) and why there's no Ingress template — a documented interop
+  boundary instead of an unexplained gap.
+- The three app-level Grafana panels tied to `prometheus-flask-exporter`'s
+  metric names (request rate, error rate, P95 latency) are now also gated on
+  `app.stack == "flask"`, not just `app.metricsPath` being set — a
+  `node`/`generic` app with `metricsPath` configured still gets scraped (the
+  ServiceMonitor is stack-agnostic) but no longer gets three permanently
+  empty panels querying metric names its own exporter never emits.
+- `FUTURE-SCOPE.md` gained two new entries: HPA support (blocked on a real
+  design decision about how it should coexist with ArgoCD's `selfHeal`
+  reverting `spec.replicas` — not just "not built yet"), and a per-app
+  `app.namespace` override (deliberately not planned — the current
+  one-app-one-namespace invariant is what makes `nexus destroy`'s
+  whole-namespace deletion safe).
+- `starlette>=1.0` added alongside `httpx2` in the `dev` extra — `httpx2` is
+  real, not a typo (already documented in `FUTURE-SCOPE.md`), but the floor
+  that makes it actually get used by FastAPI's `TestClient` was previously
+  undeclared.
