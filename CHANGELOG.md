@@ -192,6 +192,28 @@ All notable changes to Nexus are documented here. Format based on
   `IfNotPresent` alongside the load command.
 
 ### Changed
+- The CLI's terminal output now draws from one shared palette instead of each
+  command formatting itself. `core/output.py` gained `header()` (the
+  `Nexus X — name` banner over its rule), `check()` (colored ✓/✗ checklist
+  lines), `info()` (blue, for work in progress — `[i/n]` step announcements,
+  `Waiting for sync...`, `Watching pods...`), and `banner()` (the NEXUS
+  wordmark, shown by `nexus init` only — it's the first command a new user
+  runs, and repeating it on frequent commands would just be noise).
+  `success()`/`warn()`/`print_error()` moved to the same muted
+  blue/green/amber/red set. No output text changed, so `CliRunner`-based
+  tests (which strip color) were unaffected.
+- Multi-step commands are spaced out rather than run together: every step in
+  `deploy` and `destroy` trails a blank line whether it succeeded or was
+  skipped, and `print_error()` emits its own leading blank line — which fixes
+  the spacing at all ~35 call sites at once instead of relying on each caller
+  to remember.
+- The docs site homepage is now a terminal-styled landing page
+  (`overrides/home.html`, selected by `docs_site/index.md`'s `template:`
+  front matter) rather than a plain markdown page. Every other page keeps
+  Material's stock chrome, and every existing docs URL is unchanged.
+  `scripts/check_links.py` was added because `mkdocs build --strict` only
+  validates links written in markdown — it walks the *built* HTML so the
+  template's links are covered too, and runs in the docs workflow.
 - PyPI package renamed `nexus-platform` → `nexus-gitops`: `nexus-platform`
   turned out to already be taken by an unrelated project. The `nexus` command
   itself is unaffected — this only changes `pip install <name>`.

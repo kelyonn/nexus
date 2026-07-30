@@ -1,0 +1,528 @@
+{#-
+  Splash homepage for the docs site (https://kelyonn.github.io/nexus/).
+
+  Material's header/tabs/sidebars/footer are deliberately hidden here and
+  replaced with the terminal-styled landing page below — the docs pages
+  themselves keep all of Material's chrome, since this template applies only
+  to the page that opts into it (docs_site/index.md's `template:` front
+  matter). Every <style> rule here ships on this page alone, which is why it
+  can safely reset Material's own layout wrappers (.md-grid, .md-main__inner)
+  without affecting any other page.
+
+  Links use {{ base_url }} / {{ config.repo_url }} rather than hardcoded URLs
+  so they stay correct under `mkdocs serve` (localhost, no /nexus/ prefix) and
+  on GitHub Pages (served from /nexus/) alike. `mkdocs build --strict` does
+  NOT validate links inside templates — only markdown — so these are checked
+  by scripts/check_links.py instead.
+-#}
+{% extends "base.html" %}
+
+{% block htmltitle %}
+  <title>Nexus — Bring your app. Nexus handles the platform.</title>
+{% endblock %}
+
+{% block header %}{% endblock %}
+{% block tabs %}{% endblock %}
+{% block site_nav %}{% endblock %}
+{% block footer %}{% endblock %}
+
+{% block extrahead %}
+  <style>
+    :root {
+      --nx-bg: #0b0d12;
+      --nx-panel: #11141b;
+      --nx-border: rgba(122, 150, 189, 0.22);
+      --nx-fg: #9aa7b5;
+      --nx-dim: #5f6875;
+      --nx-bright: #e8ecf1;
+      --nx-blue: #6e9ccc;
+      --nx-blue-dim: #4d6d8f;
+      --nx-green: #7fb894;
+      --nx-amber: #cf9f68;
+      --nx-red: #c97b7b;
+      --nx-mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
+    }
+
+    /* The landing page commits to a single dark "terminal" world in both
+       colour schemes — it is a picture of a terminal, and a light version of
+       that reads as a bug rather than a theme. Docs pages keep both themes. */
+    body,
+    .md-container,
+    .md-main {
+      background: var(--nx-bg);
+    }
+
+    .md-main__inner {
+      margin: 0;
+      max-width: none;
+    }
+
+    .md-grid {
+      max-width: none;
+    }
+
+    .md-content {
+      margin: 0;
+    }
+
+    .nx {
+      font-family: var(--nx-mono);
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--nx-fg);
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 2.5rem 1.5rem 5rem;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .nx a {
+      color: var(--nx-blue);
+      text-decoration: none;
+      border-bottom: 1px solid var(--nx-blue-dim);
+    }
+
+    .nx a:hover,
+    .nx a:focus-visible {
+      border-bottom-color: var(--nx-blue);
+    }
+
+    .nx a:focus-visible {
+      outline: 2px solid var(--nx-blue);
+      outline-offset: 3px;
+    }
+
+    /* Nav ------------------------------------------------------------- */
+    .nx-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.4rem;
+      justify-content: center;
+      font-size: 12.5px;
+      margin-bottom: 3rem;
+    }
+
+    .nx-nav a {
+      border-bottom: none;
+      color: var(--nx-dim);
+    }
+
+    .nx-nav a:hover {
+      color: var(--nx-bright);
+    }
+
+    /* Hero ------------------------------------------------------------ */
+    .nx-logo {
+      color: var(--nx-blue);
+      font-size: clamp(6.5px, 3.3vw, 16px);
+      line-height: 1.15;
+      white-space: pre;
+      text-align: center;
+      margin: 0 0 1.6rem;
+      overflow-x: auto;
+    }
+
+    .nx-tagline {
+      text-align: center;
+      color: var(--nx-bright);
+      font-size: clamp(14px, 2.3vw, 17px);
+      font-weight: 600;
+      margin: 0 0 0.7rem;
+      text-wrap: balance;
+    }
+
+    .nx-sub {
+      text-align: center;
+      color: var(--nx-dim);
+      font-size: 13px;
+      max-width: 58ch;
+      margin: 0 auto 2.2rem;
+      text-wrap: balance;
+    }
+
+    .nx-install {
+      background: var(--nx-panel);
+      border: 1px solid var(--nx-border);
+      border-radius: 3px;
+      padding: 0.6rem 1rem;
+      color: var(--nx-bright);
+      font-size: 12.5px;
+      text-align: center;
+      overflow-x: auto;
+      white-space: nowrap;
+      margin-bottom: 1rem;
+    }
+
+    .nx-install .p {
+      color: var(--nx-green);
+    }
+
+    .nx-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1.3rem;
+      justify-content: center;
+      color: var(--nx-dim);
+      font-size: 12px;
+    }
+
+    .nx-badges b {
+      color: var(--nx-bright);
+      font-weight: 600;
+    }
+
+    /* Sections -------------------------------------------------------- */
+    .nx section {
+      margin-top: 3.4rem;
+    }
+
+    .nx-eyebrow {
+      color: var(--nx-dim);
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      margin: 0 0 0.7rem;
+    }
+
+    .nx-term {
+      background: var(--nx-panel);
+      border: 1px solid var(--nx-border);
+      border-radius: 4px;
+      overflow-x: auto;
+    }
+
+    .nx-term-bar {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.6rem 0.85rem;
+      border-bottom: 1px solid var(--nx-border);
+      color: var(--nx-dim);
+      font-size: 12px;
+    }
+
+    .nx-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: rgba(122, 150, 189, 0.4);
+    }
+
+    .nx-term pre {
+      margin: 0;
+      padding: 1rem 1.2rem 1.2rem;
+      white-space: pre;
+      font-size: 13px;
+      font-family: var(--nx-mono);
+      color: var(--nx-fg);
+      background: none;
+    }
+
+    .ok { color: var(--nx-green); }
+    .no { color: var(--nx-red); }
+    .st { color: var(--nx-blue); }
+    .dm { color: var(--nx-dim); }
+    .am { color: var(--nx-amber); }
+    .br { color: var(--nx-bright); font-weight: 600; }
+
+    .nx-note {
+      color: var(--nx-dim);
+      font-size: 12px;
+      margin-top: 0.8rem;
+    }
+
+    /* Command grid ---------------------------------------------------- */
+    .nx-cmds {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(245px, 1fr));
+      gap: 1px;
+      background: var(--nx-border);
+      border: 1px solid var(--nx-border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .nx-cmd {
+      background: var(--nx-panel);
+      padding: 0.95rem 1.05rem;
+    }
+
+    .nx-cmd b {
+      color: var(--nx-blue);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .nx-cmd span {
+      display: block;
+      color: var(--nx-dim);
+      font-size: 12px;
+      margin-top: 0.3rem;
+      line-height: 1.55;
+    }
+
+    /* Philosophy ------------------------------------------------------ */
+    .nx-phil {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 1.1rem;
+    }
+
+    .nx-phil li {
+      border-left: 2px solid var(--nx-green);
+      padding-left: 1.1rem;
+    }
+
+    .nx-phil b {
+      color: var(--nx-bright);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .nx-phil span {
+      display: block;
+      color: var(--nx-dim);
+      font-size: 12.5px;
+      margin-top: 0.25rem;
+    }
+
+    /* Stats ----------------------------------------------------------- */
+    .nx-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(135px, 1fr));
+      border: 1px solid var(--nx-border);
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .nx-stat {
+      background: var(--nx-panel);
+      padding: 1.05rem 1rem;
+      border-right: 1px solid var(--nx-border);
+    }
+
+    .nx-stat:last-child {
+      border-right: none;
+    }
+
+    .nx-stat b {
+      display: block;
+      color: var(--nx-bright);
+      font-size: 20px;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .nx-stat span {
+      display: block;
+      color: var(--nx-dim);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-top: 0.25rem;
+    }
+
+    /* CTA + footer ---------------------------------------------------- */
+    .nx-cta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.8rem;
+      justify-content: center;
+      margin-top: 3.4rem;
+    }
+
+    .nx-cta a {
+      border: 1px solid var(--nx-border);
+      border-radius: 3px;
+      padding: 0.6rem 1.2rem;
+      font-size: 13px;
+      color: var(--nx-bright);
+    }
+
+    .nx-cta a.primary {
+      border-color: var(--nx-blue-dim);
+      color: var(--nx-blue);
+    }
+
+    .nx-cta a:hover {
+      border-color: var(--nx-blue);
+    }
+
+    .nx-foot {
+      margin-top: 3.4rem;
+      padding-top: 1.6rem;
+      border-top: 1px solid var(--nx-border);
+      text-align: center;
+      color: var(--nx-dim);
+      font-size: 12px;
+    }
+
+    @media (max-width: 520px) {
+      .nx {
+        padding: 1.8rem 1rem 3.5rem;
+      }
+
+      .nx-install {
+        font-size: 11px;
+      }
+    }
+  </style>
+{% endblock %}
+
+{% block container %}
+  <div class="nx">
+
+    <nav class="nx-nav">
+      <a href="{{ base_url }}/install/">install</a>
+      <a href="{{ base_url }}/commands/">commands</a>
+      <a href="{{ base_url }}/schema/">nexus.yaml</a>
+      <a href="{{ base_url }}/architecture/">architecture</a>
+      <a href="{{ base_url }}/troubleshooting/">troubleshooting</a>
+      <a href="{{ config.repo_url }}">github</a>
+    </nav>
+
+    <pre class="nx-logo">███╗   ██╗███████╗██╗  ██╗██╗   ██╗███████╗
+████╗  ██║██╔════╝╚██╗██╔╝██║   ██║██╔════╝
+██╔██╗ ██║█████╗   ╚███╔╝ ██║   ██║███████╗
+██║╚██╗██║██╔══╝   ██╔██╗ ██║   ██║╚════██║
+██║ ╚████║███████╗██╔╝ ██╗╚██████╔╝███████║
+╚═╝  ╚═══╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝</pre>
+
+    <p class="nx-tagline">Bring your app. Nexus handles the platform.</p>
+    <p class="nx-sub">
+      One <code>nexus.yaml</code>, one command, and your app is running on Kubernetes with
+      GitOps deployment, self-healing, observability, and chaos testing — on your own
+      cluster, without a DevOps team.
+    </p>
+
+    <div class="nx-install"><span class="p">$</span> git clone {{ config.repo_url }}.git &amp;&amp; cd nexus &amp;&amp; pip install -e .</div>
+    <div class="nx-badges">
+      <span><b>Apache-2.0</b></span>
+      <span><b>Python 3.10+</b></span>
+      <span><b>478</b> tests</span>
+      <span>install from source — not yet on PyPI</span>
+    </div>
+
+    <section>
+      <p class="nx-eyebrow">// real captured output, not a mockup</p>
+      <div class="nx-term">
+        <div class="nx-term-bar"><span class="nx-dot"></span><span class="nx-dot"></span><span class="nx-dot"></span>&nbsp;&nbsp;nexus deploy</div>
+<pre><span class="dm">$</span> <span class="br">nexus deploy</span>
+
+<span class="br">Nexus Deploy — nexus-app</span>
+<span class="dm">-------------------------------------------</span>
+<span class="ok">✓ kubectl found (v1.36.2)</span>
+<span class="ok">✓ helm found (v4.2.3)</span>
+<span class="ok">✓ Cluster reachable -> minikube</span>
+
+<span class="no">✗ ArgoCD not installed → will install</span>
+<span class="no">✗ kube-prometheus-stack not installed → will install</span>
+
+Deployment plan:
+  1. Install ArgoCD <span class="dm">→ namespace: argocd</span>
+  2. Install kube-prometheus-stack <span class="dm">→ namespace: monitoring</span>
+  3. Apply app manifests <span class="dm">→ namespace: nexus-app</span>
+  4. Commit manifests to Git <span class="dm">→ k8s/</span>
+  5. Register ArgoCD app <span class="dm">→ tracking your repo @ main</span>
+
+Proceed? [y/N]: y
+
+<span class="st">[1/5] Install ArgoCD...</span>
+<span class="ok">✓     done (23s)</span>
+
+<span class="st">[5/5] Register ArgoCD app...</span>
+<span class="ok">✓     done (1s)</span>
+
+<span class="st">Waiting for sync...</span>
+<span class="ok">✓ Synced + Healthy</span>
+
+<span class="dm">-------------------------------------------</span>
+<span class="ok">✓ nexus-app is live</span></pre>
+      </div>
+      <p class="nx-note">
+        Safe to run twice — the second run skips whatever is already installed and never
+        duplicates resources. See <a href="{{ base_url }}/install/">install &amp; quickstart</a>
+        to run this yourself on Minikube or Kind.
+      </p>
+    </section>
+
+    <section>
+      <p class="nx-eyebrow">// eleven commands, one binary</p>
+      <div class="nx-cmds">
+        <div class="nx-cmd"><b>init</b><span>Detect your stack, generate a pre-filled nexus.yaml.</span></div>
+        <div class="nx-cmd"><b>deploy</b><span>Install platform deps, apply manifests, register with ArgoCD.</span></div>
+        <div class="nx-cmd"><b>status</b><span>Replicas, ArgoCD sync/health, and pod status at a glance.</span></div>
+        <div class="nx-cmd"><b>watch</b><span>Stream pod lifecycle events live from the Kubernetes API.</span></div>
+        <div class="nx-cmd"><b>logs</b><span>Tail every pod's logs, prefixed by pod name. <code>--follow</code> streams.</span></div>
+        <div class="nx-cmd"><b>chaos</b><span>One-shot pod-kill runs, or a recurring Chaos Mesh schedule.</span></div>
+        <div class="nx-cmd"><b>doctor</b><span>Diagnose the environment — every problem reported with a fix.</span></div>
+        <div class="nx-cmd"><b>upgrade</b><span>Bump the image through git, the GitOps-correct way.</span></div>
+        <div class="nx-cmd"><b>rollback</b><span>Undo via <code>git revert</code> — self-heal can't fight a revert.</span></div>
+        <div class="nx-cmd"><b>destroy</b><span>Remove the app's resources. <code>--dry-run</code> shows what would go.</span></div>
+        <div class="nx-cmd"><b>dashboard</b><span>Local control panel: app grid, metrics, GitOps sync log.</span></div>
+      </div>
+      <p class="nx-note">
+        Every command, flag, and default: <a href="{{ base_url }}/commands/">command reference</a>.
+      </p>
+    </section>
+
+    <section>
+      <p class="nx-eyebrow">// the philosophy</p>
+      <ul class="nx-phil">
+        <li>
+          <b>Git is the source of truth</b>
+          <span>Every deploy, upgrade, and rollback is a commit — not a side effect.</span>
+        </li>
+        <li>
+          <b>ArgoCD continuously reconciles</b>
+          <span>The cluster pulls from git; nothing is pushed at it directly.</span>
+        </li>
+        <li>
+          <b>Self-heal respects a real revert</b>
+          <span><code>nexus rollback</code> reverts HEAD itself, so ArgoCD's self-heal reinforces the rollback instead of fighting it.</span>
+        </li>
+        <li>
+          <b>Chaos testing is one command away</b>
+          <span><code>nexus chaos run</code> kills a pod on purpose and waits to confirm it recovered.</span>
+        </li>
+        <li>
+          <b>No hidden state</b>
+          <span>Watch pod events live, tail every log, read sync status — nothing happens off-screen.</span>
+        </li>
+      </ul>
+    </section>
+
+    <section>
+      <p class="nx-eyebrow">// where it stands</p>
+      <div class="nx-stats">
+        <div class="nx-stat"><b>478</b><span>tests passing</span></div>
+        <div class="nx-stat"><b>99%</b><span>core coverage</span></div>
+        <div class="nx-stat"><b>11</b><span>commands</span></div>
+        <div class="nx-stat"><b>Kind</b><span>e2e suite in CI</span></div>
+      </div>
+      <p class="nx-note">
+        Live-verified against real Minikube and Kind clusters: deploying an app, killing a pod
+        and watching it recover, breaking an image and watching <code>nexus doctor</code> catch
+        it, and rolling back through <code>git revert</code> — proven to survive ArgoCD's
+        self-heal, not just claimed to. Cloud quick-starts
+        (<a href="{{ base_url }}/cloud/">EKS/GKE/AKS</a>) are written but not yet verified
+        against real cloud clusters.
+      </p>
+    </section>
+
+    <div class="nx-cta">
+      <a class="primary" href="{{ base_url }}/install/">Install &amp; quickstart</a>
+      <a href="{{ base_url }}/architecture/">How it works</a>
+      <a href="{{ config.repo_url }}">View on GitHub</a>
+    </div>
+
+    <p class="nx-foot">
+      Apache-2.0 · Started as a hand-wired GitOps demo — Nexus is the tool that generates all
+      of it from one file.
+    </p>
+
+  </div>
+{% endblock %}

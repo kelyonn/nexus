@@ -15,7 +15,19 @@ on:
     branches: [main]
     paths:
       - "docs_site/**"
+      - "overrides/**"
       - "mkdocs.yml"
+      - "scripts/check_links.py"
+      - ".github/workflows/docs.yml"
+  # Build + link-check on PRs too, so a broken link fails review rather than
+  # landing on main and only failing at deploy time. The deploy job below is
+  # gated to non-PR runs, so a PR never publishes.
+  pull_request:
+    paths:
+      - "docs_site/**"
+      - "overrides/**"
+      - "mkdocs.yml"
+      - "scripts/check_links.py"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -45,14 +57,25 @@ jobs:
       - name: Build (strict — fails on broken internal links)
         run: mkdocs build --strict
 
+      # --strict only validates links written in markdown; the homepage is a
+      # Jinja template (overrides/home.html), so its links need checking
+      # against the built HTML.
+      - name: Check every internal link in the built site
+        run: python scripts/check_links.py
+
+      # Pages plumbing is only meaningful for a run that will actually deploy.
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
 
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: site
 
   deploy:
     needs: build
+    # PRs build and link-check only — publishing stays a main-branch action.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

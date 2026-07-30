@@ -59,6 +59,20 @@ npx tsc --noEmit
 NEXUS_STATIC_EXPORT=1 npm run build
 ```
 
+If you touched `docs_site/`, `overrides/`, or `mkdocs.yml`:
+
+```bash
+pip install -e ".[docs]"
+mkdocs build --strict      # fails on broken links written in markdown
+python scripts/check_links.py   # every link in the *built* site, templates included
+mkdocs serve               # preview at http://127.0.0.1:8000
+```
+
+The homepage is a Jinja template ([overrides/home.html](overrides/home.html)),
+not markdown — `mkdocs build --strict` can't see its links, which is why
+`scripts/check_links.py` exists. Edit that file to change the landing page;
+`docs_site/index.md` only carries the `template:` front matter that selects it.
+
 **Live-verify against a real cluster before claiming something works.**
 Nothing in this project's history has shipped on unit tests alone — every
 fix and feature here was proven against a real Minikube or Kind cluster
