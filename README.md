@@ -8,18 +8,19 @@ project, fill in one YAML file, run `nexus deploy` — and get GitOps deployment
 (ArgoCD), self-healing, observability (Prometheus + Grafana), and optional
 chaos testing (Chaos Mesh) on **your own cluster**, without a DevOps team.
 
-📖 **[Full documentation](https://kelyonn.github.io/nexus/)** — install guide,
+🌐 **[nexus site & docs](https://kelyonn.github.io/nexus/)** — install guide,
 command reference, `nexus.yaml` schema, architecture, and troubleshooting.
 
 ## Status
 
-✅ **Phase 1 + Phase 2 (the full CLI) are done.** All ten commands —
+✅ **Phase 1 + Phase 2 (the full CLI) are done.** All eleven commands —
 `init`, `deploy`, `status`, `watch`, `destroy`, `logs`, `chaos run`/`chaos
-schedule`, `doctor`, `upgrade`, and `rollback` — exist and are verified
-against real clusters (Minikube and Kind): deploying an app, streaming logs
-and pod events, killing a pod and watching it recover, diagnosing a broken
-environment, bumping an image through GitOps, and rolling it back through
-`git revert` — proven to survive ArgoCD's self-heal, not just claimed to.
+schedule`, `doctor`, `upgrade`, `rollback`, and `dashboard` — exist and are
+verified against real clusters (Minikube and Kind): deploying an app,
+streaming logs and pod events, killing a pod and watching it recover,
+diagnosing a broken environment, bumping an image through GitOps, and rolling
+it back through `git revert` — proven to survive ArgoCD's self-heal, not just
+claimed to.
 
 ✅ **The dashboard is built, including app-level metrics.** `nexus dashboard`
 launches a local control panel — an Overview grid of every Nexus-managed app,
@@ -109,6 +110,31 @@ deployed (`nexus deploy` above) to show anything on the Overview grid.
 `nexus dashboard` port-forwards Grafana and Prometheus for you automatically
 if it finds them on the cluster — no manual `kubectl port-forward` needed.
 
+## Documentation
+
+The full docs live at **<https://kelyonn.github.io/nexus/>** — built from
+[docs_site/](docs_site) with MkDocs Material and deployed to GitHub Pages by
+[.github/workflows/docs.yml](.github/workflows/docs.yml) on every push to
+`main` that touches the site.
+
+| Page | What's in it |
+|---|---|
+| [Install & quickstart](https://kelyonn.github.io/nexus/install/) | Get a real app deployed to Minikube or Kind in under ten minutes |
+| [Command reference](https://kelyonn.github.io/nexus/commands/) | Every command and flag, straight from `--help` |
+| [nexus.yaml schema](https://kelyonn.github.io/nexus/schema/) | Every field, its type, default, and validation rule |
+| [Architecture](https://kelyonn.github.io/nexus/architecture/) | How the CLI, generated manifests, ArgoCD, and dashboard fit together |
+| [Multiple environments](https://kelyonn.github.io/nexus/multi-environment/) | Staging and prod from separate `nexus.yaml` files |
+| [Troubleshooting](https://kelyonn.github.io/nexus/troubleshooting/) | Real problems hit during development, and their fixes |
+| [Cloud quick-starts](https://kelyonn.github.io/nexus/cloud/) | EKS/GKE/AKS notes (⚠️ not yet verified against real cloud clusters) |
+
+To work on the site locally:
+
+```bash
+pip install -e ".[docs]"
+mkdocs serve                     # http://127.0.0.1:8000
+mkdocs build --strict && python scripts/check_links.py
+```
+
 ## Repository map
 
 ```
@@ -116,7 +142,9 @@ nexus_cli/          The Python package (Typer CLI) — the full command suite
 dashboard/backend/  FastAPI API + static frontend server for the dashboard (127.0.0.1:3002)
 dashboard/frontend/ Next.js control panel, built to a static export (dashboard/frontend/out/)
 examples/           Sample apps for demos and e2e tests (flask-demo, live-tested)
-tests/              441 unit tests (99% core coverage) + a Kind-based integration suite
+tests/              478 unit tests (99% core coverage) + a Kind-based integration suite
+docs_site/          Source for the published site (MkDocs Material → GitHub Pages)
+overrides/          home.html — the landing page at kelyonn.github.io/nexus
 legacy/             The original hand-written GitOps demo (archived, read-only)
 ```
 
