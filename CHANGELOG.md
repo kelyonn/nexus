@@ -274,6 +274,16 @@ All notable changes to Nexus are documented here. Format based on
   `NexusError` instead of a raw parser error reaching `kubectl apply`.
 
 ### Changed
+- Docs updated for `nexus open` and the Grafana-credentials change:
+  `docs_site/commands.md` gained an entry for `nexus open`, and both it and
+  `docs_site/install.md` mention the Minikube `deploy` shortcut and the
+  Grafana login `nexus dashboard` now prints; `docs_site/exposing-your-app.md`
+  leads with `nexus open` instead of the raw `kubectl port-forward` command.
+  `README.md` trimmed: dropped "The story" and "Repository map" (narrative
+  and contributor-orientation content that doesn't help someone evaluating or
+  using the tool), the docs-build snippet under "Documentation" now points at
+  `CONTRIBUTING.md` instead of duplicating it, and the stale `478 tests`
+  count is corrected to `597`.
 - The CLI's terminal output now draws from one shared palette instead of each
   command formatting itself. `core/output.py` gained `header()` (the
   `Nexus X — name` banner over its rule), `check()` (colored ✓/✗ checklist

@@ -19,13 +19,28 @@ incompatible ones. Neither fits "one YAML file, no dedicated platform team."
 
 ## Option 1 — `kubectl port-forward` (the default, works everywhere)
 
-What `nexus deploy` itself prints on success, and what `app.serviceType`
-defaults to (`ClusterIP`) is built for:
+What `app.serviceType` defaults to (`ClusterIP`) is built for. The easiest
+way to use it:
+
+```bash
+nexus open
+# port-forwards the app's Service and opens it in your browser, Ctrl+C to stop
+```
+
+`nexus deploy` doesn't spawn this itself — it's a one-shot, idempotent
+command, and a tunnel left running after it exits would collide with your
+next `deploy` on the same local port — so `nexus open` is a separate,
+explicit command instead. It's just a wrapper around what `nexus deploy`
+itself prints on success:
 
 ```bash
 kubectl -n <app-name> port-forward svc/<app-name> 18080:80
 # → http://127.0.0.1:18080
 ```
+
+Run that directly if you don't want a browser tab opened for you, or on
+Minikube, `minikube service <app-name> -n <app-name>` does the same tunnel +
+open in one external command.
 
 Works identically on Minikube, Kind, and any real cloud cluster — no cloud
 resources provisioned, nothing billed. The right choice for local
