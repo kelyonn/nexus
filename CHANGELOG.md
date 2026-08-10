@@ -206,6 +206,15 @@ All notable changes to Nexus are documented here. Format based on
   one place you're actually going to hit that login screen — the dashboard's
   embedded panels — also tells you the credentials, instead of leaving you to
   go hunt for them separately.
+- `nexus open` — port-forwards the app's Service and opens it in your browser,
+  until Ctrl+C. `nexus deploy` deliberately never does this itself: it's a
+  one-shot, idempotent command, and a background tunnel left running after it
+  exits would collide with a later re-deploy on the same local port with no
+  lifecycle anyone's tracking. This is the dedicated, explicit way to view a
+  deployed app instead — same shape as `nexus watch`. The README's "Try it"
+  quickstart previously ran through `deploy`/`status`/`watch`/`logs`/`chaos
+  run`/`doctor`/`destroy` without ever mentioning how to actually look at the
+  running app; it now includes this step.
 
 ### Fixed
 - `deploy`/`upgrade`/`rollback` could report a rollout as successful while it

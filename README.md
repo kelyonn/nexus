@@ -58,12 +58,21 @@ minikube start --driver=docker
 cd examples/flask-demo
 nexus deploy      # installs ArgoCD + monitoring, deploys the app — type y
 nexus status        # replicas, pods, ArgoCD sync/health
+nexus open           # port-forwards the app and opens it in your browser, Ctrl+C to stop
 nexus watch          # live pod events, Ctrl+C to stop
 nexus logs            # tail every pod's logs, prefixed by pod name
 nexus chaos run        # kill one pod, watch it recover
 nexus doctor             # environment diagnostics — every problem, with a fix
 nexus destroy              # type the app name to confirm
 ```
+
+`nexus deploy` never opens the app for you — it's a one-shot, idempotent
+command, and a background tunnel left running after it exits would collide
+with your next `nexus deploy`. `nexus open` is the dedicated way to view it
+(on Minikube, `minikube service <app-name> -n <app-name>` also works and
+skips the extra command). See
+[Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/) for
+the other options (`serviceType`, your own Ingress).
 
 `nexus deploy` is idempotent — safe to run more than once. `nexus upgrade
 --image <tag>` and `nexus rollback` also exist but need a real git remote
