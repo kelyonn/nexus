@@ -23,7 +23,9 @@ with ArgoCD.
 | `-y`, `--yes` | Skip the confirmation prompt. |
 
 Idempotent (PRD §12) — running it again skips components already installed
-and never duplicates resources.
+and never duplicates resources. On success, prints the exact command to view
+the app (see `nexus open` below) — on Minikube, also `minikube service
+<app-name> -n <app-name>`, which tunnels and opens the browser in one step.
 
 ## `nexus status`
 
@@ -32,6 +34,20 @@ Show deployment health: replicas, ArgoCD sync/health, and pod status.
 | Flag | Description |
 |---|---|
 | `--config <str>` | Path to the `nexus.yaml` to read. Default: `nexus.yaml` |
+
+## `nexus open`
+
+Port-forward the app's Service and open it in your browser, until Ctrl+C.
+
+| Flag | Description |
+|---|---|
+| `--config <str>` | Path to the `nexus.yaml` to read. Default: `nexus.yaml` |
+
+`nexus deploy` never does this itself — it's a one-shot, idempotent command,
+and a background tunnel left running after it exits would collide with a
+later re-deploy on the same local port. `nexus open` is the dedicated,
+explicit way to view a deployed app instead — see
+[Exposing your app](exposing-your-app.md) for the other options.
 
 ## `nexus watch`
 
@@ -125,3 +141,7 @@ Both take `--config <str>` (default: `nexus.yaml`).
 Launch the local dashboard and open it in your browser. No flags — see
 [Install & quickstart](install.md#the-dashboard) for what it needs and
 [Architecture](architecture.md#the-dashboard) for how it's put together.
+
+If Grafana is on the cluster, its admin login (`admin` / a generated
+password) is printed right when `nexus dashboard` forwards it, so the login
+screen on the embedded panels isn't a dead end.

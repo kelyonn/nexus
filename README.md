@@ -13,7 +13,7 @@ config file (`nexus.yaml`) plus one command (`nexus deploy`) gets you:
 All on your own cluster — no DevOps team required.
 
 📖 **[Docs](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
-478 tests, 99% core coverage · not yet on PyPI — install from source below
+597 tests, 99% core coverage · not yet on PyPI — install from source below
 
 ## What it looks like
 
@@ -108,34 +108,8 @@ Full docs, including the pieces above with more detail:
 | [Cloud quick-starts](https://kelyonn.github.io/nexus/cloud/) | EKS/GKE/AKS notes (⚠️ not yet verified against real cloud clusters) |
 
 Built from [docs_site/](docs_site) with MkDocs Material, deployed to GitHub
-Pages on every push to `main` that touches the site. To work on it locally:
-
-```bash
-pip install -e ".[docs]"
-mkdocs serve                     # http://127.0.0.1:8000
-mkdocs build --strict && python scripts/check_links.py
-```
-
-## Repository map
-
-```
-nexus_cli/          The Python package (Typer CLI) — the full command suite
-dashboard/backend/  FastAPI API + static frontend server for the dashboard (127.0.0.1:3002)
-dashboard/frontend/ Next.js control panel, built to a static export (dashboard/frontend/out/)
-examples/           Sample apps for demos and e2e tests (flask-demo, live-tested)
-tests/              478 unit tests (99% core coverage) + a Kind-based integration suite
-docs_site/          Source for the published site (MkDocs Material → GitHub Pages)
-overrides/          home.html — the landing page at kelyonn.github.io/nexus
-legacy/             The original hand-written GitOps demo (archived, read-only)
-```
-
-## The story
-
-This started as a hand-built GitOps demo — a Flask app wired by hand to
-Kubernetes, ArgoCD, Prometheus, and Chaos Mesh (see
-[legacy/](legacy/README.md)). That setup took days, and almost none of it was
-specific to the app. Nexus is the tool that generates all of it from one
-config file.
+Pages on every push to `main` that touches the site — see
+[CONTRIBUTING.md](CONTRIBUTING.md#before-opening-a-pr) to work on it locally.
 
 ## Contributing
 

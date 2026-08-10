@@ -38,12 +38,20 @@ a known Minikube quirk, not a Nexus problem. See
 cd examples/flask-demo
 nexus deploy      # installs ArgoCD + monitoring, deploys the app — type y
 nexus status        # replicas, pods, ArgoCD sync/health
+nexus open           # port-forwards the app and opens it in your browser, Ctrl+C to stop
 nexus watch          # live pod events, Ctrl+C to stop
 nexus logs            # tail every pod's logs, prefixed by pod name
 nexus chaos run        # kill one pod, watch it recover
 nexus doctor             # environment diagnostics — every problem, with a fix
 nexus destroy              # type the app name to confirm
 ```
+
+`nexus deploy` never opens the app for you — it's a one-shot, idempotent
+command, and a background tunnel left running after it exits would collide
+with your next `nexus deploy`. `nexus open` is the dedicated way to view it
+(on Minikube, `minikube service <app-name> -n <app-name>` also works and
+skips the extra command) — see [Exposing your app](exposing-your-app.md) for
+the other options.
 
 `nexus deploy` is safe to run more than once — it skips components that are
 already installed and never duplicates resources. See the
@@ -67,7 +75,9 @@ anything on the Overview grid.
 
 `nexus dashboard` automatically port-forwards Grafana and Prometheus if it
 finds them on the cluster, so the Metrics panels and CPU/memory sparklines on
-the App Detail page just work — no manual `kubectl port-forward` needed.
+the App Detail page just work — no manual `kubectl port-forward` needed. It
+also prints Grafana's admin login right then, so the embedded panels' login
+screen isn't a dead end.
 
 Want the request-rate / error-rate / P95-latency panels too? Set
 `app.metricsPath` in `nexus.yaml` — see the
