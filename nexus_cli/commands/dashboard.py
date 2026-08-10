@@ -67,6 +67,10 @@ def dashboard() -> None:
         start_fn=core_dashboard.start_grafana_port_forward,
         local_port=core_dashboard.GRAFANA_LOCAL_PORT,
     )
+    creds = core_dashboard.grafana_admin_credentials()
+    if creds is not None:
+        username, password = creds
+        output.step(f"  Grafana login: {username} / {password}")
     _start_optional_port_forward(
         procs,
         label="Prometheus",
