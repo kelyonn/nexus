@@ -176,8 +176,38 @@ def test_wait_for_healthy_returns_when_synced_and_healthy(monkeypatch: pytest.Mo
             last_sync_time="t",
         ),
     )
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: True)
     result = argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
     assert result.sync_status == "Synced"
+
+
+def test_wait_for_healthy_does_not_trust_premature_healthy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: ArgoCD can report ``Healthy`` immediately after a rollout to
+    a broken image starts, before it notices the new ReplicaSet is failing —
+    the old ReplicaSet's still-healthy pods alone can satisfy ArgoCD's own
+    check. ``Healthy`` must be cross-checked against ground truth too, not
+    just ``Progressing``.
+    """
+    monkeypatch.setattr(
+        argocd,
+        "get_status",
+        lambda name: argocd.ArgoAppStatus(
+            name=name,
+            sync_status="Synced",
+            health_status="Healthy",
+            revision="x",
+            last_sync_time="t",
+        ),
+    )
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: False)
+    fake_clock = iter([0, 1, 2, 100])
+    monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
+    monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
+
+    with pytest.raises(NexusError, match="did not become Synced"):
+        argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
 
 
 def _progressing_status(name: str) -> argocd.ArgoAppStatus:
@@ -197,7 +227,7 @@ def test_wait_for_healthy_accepts_progressing_when_deployment_actually_ready(
     Kubernetes itself reports fully available. Ground truth wins.
     """
     monkeypatch.setattr(argocd, "get_status", _progressing_status)
-    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: True)
 
     result = argocd.wait_for_healthy("my-app", timeout=5, poll_interval=0)
 
@@ -212,7 +242,7 @@ def test_wait_for_healthy_still_times_out_when_progressing_and_not_actually_read
     itself confirms every replica is up.
     """
     monkeypatch.setattr(argocd, "get_status", _progressing_status)
-    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 1))
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: False)
     fake_clock = iter([0, 1, 2, 100])
     monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
     monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
@@ -236,7 +266,7 @@ def test_wait_for_healthy_does_not_override_degraded(monkeypatch: pytest.MonkeyP
             last_sync_time="t",
         ),
     )
-    monkeypatch.setattr(argocd.status, "replica_counts", lambda ns, name: (2, 2))
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: True)
     fake_clock = iter([0, 1, 2, 100])
     monkeypatch.setattr(argocd.time, "monotonic", lambda: next(fake_clock))
     monkeypatch.setattr(argocd.time, "sleep", lambda s: None)
@@ -250,10 +280,22 @@ def test_deployment_actually_ready_false_on_kubectl_failure(
 ) -> None:
     """A kubectl failure while cross-checking must never masquerade as 'ready'."""
 
-    def raise_err(namespace: str, name: str) -> tuple[int, int]:
+    def raise_err(namespace: str, name: str) -> bool:
         raise NexusError(what="deployment not found")
 
-    monkeypatch.setattr(argocd.status, "replica_counts", raise_err)
+    monkeypatch.setattr(argocd.status, "rollout_complete", raise_err)
+    assert argocd._deployment_actually_ready("my-app") is False
+
+
+def test_deployment_actually_ready_false_when_old_replicas_mask_broken_rollout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a stale ReplicaSet's still-healthy pods can satisfy
+    ``availableReplicas >= desired`` on their own while a new bad pod (e.g.
+    ImagePullBackOff) means the rollout hasn't actually completed.
+    ``rollout_complete`` — not raw replica counts — is what must gate this.
+    """
+    monkeypatch.setattr(argocd.status, "rollout_complete", lambda ns, name: False)
     assert argocd._deployment_actually_ready("my-app") is False
 
 
