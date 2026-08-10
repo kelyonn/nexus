@@ -72,6 +72,12 @@ class MetricPoint(BaseModel):
 class MetricsResponse(BaseModel):
     cpu: list[MetricPoint]
     memory: list[MetricPoint]
+    restarts: list[MetricPoint]
+    desired_replicas: list[MetricPoint]
+    available_replicas: list[MetricPoint]
+    http_request_rate: list[MetricPoint]
+    http_error_rate: list[MetricPoint]
+    http_latency_p95: list[MetricPoint]
 
 
 def _app_or_404(name: str) -> argocd.ArgoAppStatus:
@@ -165,11 +171,15 @@ def trigger_chaos(name: str, body: ChaosRequest) -> ChaosResponse:
 
 @router.get("/apps/{name}/metrics", response_model=MetricsResponse)
 def app_metrics(name: str, window: str = prometheus.DEFAULT_WINDOW) -> MetricsResponse:
-    """CPU/memory sparkline data for the App Detail view (PRD §10.2).
+    """All native metrics-panel data for the App Detail view (PRD §10.2).
 
-    Proxies Prometheus with the exact same PromQL the CPU/Memory Grafana
-    dashboard already runs (templates/grafana-dashboard.yaml.j2), so the
-    sparklines and the full panel can never disagree.
+    Proxies Prometheus with the exact same PromQL the per-app Grafana
+    dashboards already run (templates/grafana-dashboard.yaml.j2), so these
+    panels and Grafana can never disagree. Every series is fetched here —
+    including the HTTP ones, which return empty for an app that never
+    opted into app.metricsPath — so the frontend needs exactly one poll per
+    App Detail view instead of stitching this together with the Grafana
+    reachability/embedding dance it used to do.
     """
     _app_or_404(name)
     try:
@@ -177,13 +187,34 @@ def app_metrics(name: str, window: str = prometheus.DEFAULT_WINDOW) -> MetricsRe
     except NexusError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
     try:
-        cpu = prometheus.query_range(prometheus.cpu_query(name), window_seconds)
-        memory = prometheus.query_range(prometheus.memory_query(name), window_seconds)
+        results = prometheus.query_range_many(
+            {
+                "cpu": prometheus.cpu_query(name),
+                "memory": prometheus.memory_query(name),
+                "restarts": prometheus.restarts_query(name),
+                "desired_replicas": prometheus.desired_replicas_query(name),
+                "available_replicas": prometheus.available_replicas_query(name),
+                "http_request_rate": prometheus.http_request_rate_query(name),
+                "http_error_rate": prometheus.http_error_rate_query(name),
+                "http_latency_p95": prometheus.http_latency_p95_query(name),
+            },
+            window_seconds,
+        )
     except NexusError as err:
         raise HTTPException(status_code=502, detail=str(err)) from err
+
+    def points(pairs: list[tuple[float, float]]) -> list[MetricPoint]:
+        return [MetricPoint(timestamp=ts, value=v) for ts, v in pairs]
+
     return MetricsResponse(
-        cpu=[MetricPoint(timestamp=ts, value=v) for ts, v in cpu],
-        memory=[MetricPoint(timestamp=ts, value=v) for ts, v in memory],
+        cpu=points(results["cpu"]),
+        memory=points(results["memory"]),
+        restarts=points(results["restarts"]),
+        desired_replicas=points(results["desired_replicas"]),
+        available_replicas=points(results["available_replicas"]),
+        http_request_rate=points(results["http_request_rate"]),
+        http_error_rate=points(results["http_error_rate"]),
+        http_latency_p95=points(results["http_latency_p95"]),
     )
 
 

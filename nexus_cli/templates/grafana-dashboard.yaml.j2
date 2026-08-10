@@ -1,13 +1,20 @@
 {# `app.name` below is interpolated raw (no `| tojson`), unlike every other
    template in nexus_cli/templates/. Deliberate: here it sits inside JSON
-   string literals inside a YAML block scalar (each `*.json: |-` dashboard
-   body) — `| tojson` would add a second layer of JSON-string quoting and
-   corrupt the payload rather than protect it (that's why the manual `\"`
-   escaping below exists in the JSON itself, e.g. line ~29). Safe to leave
-   raw because `app.name` is already regex-validated to `^[a-z0-9-]+$`
-   (config.py's AppConfig._name) — a charset with no quotes or newlines, so
-   nothing here can break out of the YAML block scalar or the embedded JSON.
-   See docs/INTERVIEW-BRIEF.md for why the fix isn't applied uniformly. #}
+   string literals inside a YAML block scalar (the `overview.json:` body) —
+   `| tojson` would add a second layer of JSON-string quoting and corrupt the
+   payload rather than protect it (that's why the manual `\"` escaping below
+   exists in the JSON itself, e.g. line ~29). Safe to leave raw because
+   `app.name` is already regex-validated to `^[a-z0-9-]+$` (config.py's
+   AppConfig._name) — a charset with no quotes or newlines, so nothing here
+   can break out of the YAML block scalar or the embedded JSON.
+
+   One dashboard, not several: every panel below used to be its own
+   single-panel dashboard (four separate Grafana entries to click between,
+   derived from legacy/monitoring/grafana-dashboards-configmap.yaml's four
+   ConfigMap keys). Consolidated into one so there's exactly one place to
+   look for an app's health instead of four — same panels, same PromQL,
+   just laid out in one JSON body with stacked `gridPos` instead of split
+   across separate `data` keys. #}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -18,11 +25,11 @@ metadata:
     app: {{ app.name }}
     managed-by: nexus
 data:
-  app-availability.json: |-
+  overview.json: |-
     {
-      "uid": "{{ app.name }}-availability",
-      "title": "{{ app.name }} - Pod Availability",
-      "tags": ["nexus", "availability"],
+      "uid": "{{ app.name }}-overview",
+      "title": "{{ app.name }} - Overview",
+      "tags": ["nexus"{% if app.metricsPath and app.stack == "flask" %}, "http"{% endif %}],
       "timezone": "browser",
       "schemaVersion": 38,
       "version": 1,
@@ -40,346 +47,12 @@ data:
               "legendFormat": "available"
             }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-  pod-restarts.json: |-
-    {
-      "uid": "{{ app.name }}-restarts",
-      "title": "{{ app.name }} - Pod Restarts",
-      "tags": ["nexus", "restarts"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
-          "type": "timeseries",
-          "title": "Restart Count (5m increase)",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"{{ app.name }}\",container=\"{{ app.name }}\"}[5m]))",
-              "legendFormat": "{{ '{{pod}}' }}"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-  # No `container=` label filter here, unlike pod-restarts.json below — these
-  # two queries hit cAdvisor (job=kubelet), not kube-state-metrics, and on at
-  # least one real cluster (Minikube v1.36.2 / cAdvisor's kubelet-embedded
-  # exporter) cAdvisor's per-container cgroup metrics carry no `container`
-  # label at all, only the pod-level cgroup aggregate (namespace+pod, no
-  # container). Filtering on `container` here silently returns zero series
-  # forever. `namespace` alone is safe and sufficient given one app per
-  # namespace is already a hard invariant of this project.
-  resource-usage.json: |-
-    {
-      "uid": "{{ app.name }}-resources",
-      "title": "{{ app.name }} - CPU/Memory Usage",
-      "tags": ["nexus", "resources"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
-          "type": "timeseries",
-          "title": "CPU Usage (cores)",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{{ app.name }}\"}[5m]))",
-              "legendFormat": "cpu"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "cores",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
           "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
         },
         {
           "id": 2,
-          "type": "timeseries",
-          "title": "Memory Usage (bytes)",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(container_memory_working_set_bytes{namespace=\"{{ app.name }}\"})",
-              "legendFormat": "memory"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "bytes",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-{% if app.metricsPath and app.stack == "flask" %}
-  # These three assume the app exposes Prometheus metrics named
-  # flask_http_request_total{method,status} and
-  # flask_http_request_duration_seconds_bucket{method,path,status,le} — what
-  # prometheus-flask-exporter actually emits (verified empirically against a
-  # running instance, not assumed: it does NOT use the generic
-  # http_requests_total naming some other client libraries use). The
-  # ServiceMonitor scrapes any app.metricsPath regardless of exporter — that
-  # part is stack-agnostic — but these specific panel queries are tied to
-  # this one library's metric names, so they're gated on app.stack ==
-  # "flask" too: a node/generic app with metricsPath set still gets scraped,
-  # it just doesn't get three permanently-empty panels querying metric names
-  # its own exporter never emits.
-  http-request-rate.json: |-
-    {
-      "uid": "{{ app.name }}-requests",
-      "title": "{{ app.name }} - HTTP Request Rate",
-      "tags": ["nexus", "requests"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
-          "type": "timeseries",
-          "title": "Requests/sec",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(rate(flask_http_request_total{namespace=\"{{ app.name }}\"}[5m]))",
-              "legendFormat": "requests"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "reqps",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-  http-error-rate.json: |-
-    {
-      "uid": "{{ app.name }}-errors",
-      "title": "{{ app.name }} - HTTP Error Rate",
-      "tags": ["nexus", "errors"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
-          "type": "timeseries",
-          "title": "5xx Responses/sec",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "sum(rate(flask_http_request_total{namespace=\"{{ app.name }}\",status=~\"5..\"}[5m]))",
-              "legendFormat": "errors"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "reqps",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-  http-latency.json: |-
-    {
-      "uid": "{{ app.name }}-latency",
-      "title": "{{ app.name }} - HTTP P95 Latency",
-      "tags": ["nexus", "latency"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
-          "type": "timeseries",
-          "title": "P95 Latency (seconds)",
-          "datasource": "${DS_PROMETHEUS}",
-          "targets": [
-            {
-              "refId": "A",
-              "expr": "histogram_quantile(0.95, sum(rate(flask_http_request_duration_seconds_bucket{namespace=\"{{ app.name }}\"}[5m])) by (le))",
-              "legendFormat": "p95"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
-            }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
-        }
-      ],
-      "templating": {
-        "list": [
-          {
-            "name": "DS_PROMETHEUS",
-            "type": "datasource",
-            "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
-          }
-        ]
-      }
-    }
-{% endif %}
-  replica-status.json: |-
-    {
-      "uid": "{{ app.name }}-replicas",
-      "title": "{{ app.name }} - Desired vs Running",
-      "tags": ["nexus", "replicas"],
-      "timezone": "browser",
-      "schemaVersion": 38,
-      "version": 1,
-      "refresh": "10s",
-      "panels": [
-        {
-          "id": 1,
           "type": "timeseries",
           "title": "Desired vs Available Replicas",
           "datasource": "${DS_PROMETHEUS}",
@@ -395,22 +68,118 @@ data:
               "legendFormat": "available"
             }
           ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "min": 0
-            },
-            "overrides": []
-          },
-          "options": {
-            "legend": {
-              "showLegend": true,
-              "displayMode": "list",
-              "placement": "bottom"
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 }
+        },
+        {
+          "id": 3,
+          "type": "timeseries",
+          "title": "Restart Count (5m increase)",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum by (pod) (increase(kube_pod_container_status_restarts_total{namespace=\"{{ app.name }}\",container=\"{{ app.name }}\"}[5m]))",
+              "legendFormat": "{{ '{{pod}}' }}"
             }
-          },
-          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 }
+          ],
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 }
+        },
+{# No `container=` label filter on the CPU/Memory queries below, unlike
+   restarts above — these two hit cAdvisor (job=kubelet), not
+   kube-state-metrics, and on at least one real cluster (Minikube v1.36.2 /
+   cAdvisor's kubelet-embedded exporter) cAdvisor's per-container cgroup
+   metrics carry no `container` label at all, only the pod-level cgroup
+   aggregate (namespace+pod, no container). Filtering on `container` here
+   silently returns zero series forever. `namespace` alone is safe and
+   sufficient given one app per namespace is already a hard invariant of
+   this project. #}
+        {
+          "id": 4,
+          "type": "timeseries",
+          "title": "CPU Usage (cores)",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{{ app.name }}\"}[5m]))",
+              "legendFormat": "cpu"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "cores", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Memory Usage (bytes)",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(container_memory_working_set_bytes{namespace=\"{{ app.name }}\"})",
+              "legendFormat": "memory"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 }
         }
+{% if app.metricsPath and app.stack == "flask" %}
+        ,
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "HTTP Requests/sec",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(flask_http_request_total{namespace=\"{{ app.name }}\"}[5m]))",
+              "legendFormat": "requests"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 }
+        },
+        {
+          "id": 7,
+          "type": "timeseries",
+          "title": "HTTP 5xx Responses/sec",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "sum(rate(flask_http_request_total{namespace=\"{{ app.name }}\",status=~\"5..\"}[5m]))",
+              "legendFormat": "errors"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "reqps", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 32 }
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "HTTP P95 Latency (seconds)",
+          "datasource": "${DS_PROMETHEUS}",
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "histogram_quantile(0.95, sum(rate(flask_http_request_duration_seconds_bucket{namespace=\"{{ app.name }}\"}[5m])) by (le))",
+              "legendFormat": "p95"
+            }
+          ],
+          "fieldConfig": { "defaults": { "unit": "s", "min": 0 }, "overrides": [] },
+          "options": { "legend": { "showLegend": true, "displayMode": "list", "placement": "bottom" } },
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 40 }
+        }
+{% endif %}
       ],
       "templating": {
         "list": [

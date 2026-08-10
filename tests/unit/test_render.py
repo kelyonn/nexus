@@ -410,71 +410,76 @@ def test_prometheus_rules_matches_legacy_structure(rendered: dict[str, str]) -> 
 
 
 def test_grafana_dashboard_matches_legacy_structure(rendered: dict[str, str]) -> None:
+    """One consolidated dashboard, not the four separate ones legacy has —
+    same panels (derived from legacy/monitoring/grafana-dashboards-configmap.yaml),
+    just laid out in one JSON body instead of split across four ConfigMap
+    keys, so there's exactly one place to look at an app's health.
+    """
     (doc,) = render.parse_documents(rendered["grafana-dashboard"])
     assert doc["kind"] == "ConfigMap"
     assert doc["metadata"]["namespace"] == "monitoring"
     assert doc["metadata"]["labels"]["grafana_dashboard"] == "1"  # legacy label, verbatim
-
-    # legacy has exactly these four dashboards
-    assert set(doc["data"]) == {
-        "app-availability.json",
-        "pod-restarts.json",
-        "resource-usage.json",
-        "replica-status.json",
-    }
+    assert set(doc["data"]) == {"overview.json"}
 
     import json
 
-    availability = json.loads(doc["data"]["app-availability.json"])
-    assert availability["uid"] == "nexus-app-availability"
-    assert availability["schemaVersion"] == 38  # legacy: 38
-    assert availability["refresh"] == "10s"  # legacy: 10s
-    expr = availability["panels"][0]["targets"][0]["expr"]
-    assert 'namespace="nexus-app"' in expr
-    assert 'deployment="nexus-app"' in expr
+    overview = json.loads(doc["data"]["overview.json"])
+    assert overview["uid"] == "nexus-app-overview"
+    assert overview["schemaVersion"] == 38  # legacy: 38
+    assert overview["refresh"] == "10s"  # legacy: 10s
 
-    restarts = json.loads(doc["data"]["pod-restarts.json"])
-    expr = restarts["panels"][0]["targets"][0]["expr"]
+    panels = {p["title"]: p for p in overview["panels"]}
+    assert set(panels) == {
+        "Available Replicas",
+        "Desired vs Available Replicas",
+        "Restart Count (5m increase)",
+        "CPU Usage (cores)",
+        "Memory Usage (bytes)",
+    }
+
+    availability_expr = panels["Available Replicas"]["targets"][0]["expr"]
+    assert 'namespace="nexus-app"' in availability_expr
+    assert 'deployment="nexus-app"' in availability_expr
+
+    restarts = panels["Restart Count (5m increase)"]
+    expr = restarts["targets"][0]["expr"]
     assert 'namespace="nexus-app"' in expr
     assert 'container="nexus-app"' in expr
     # Grafana's own {{pod}} templating syntax must survive Jinja rendering untouched
-    assert restarts["panels"][0]["targets"][0]["legendFormat"] == "{{pod}}"
+    assert restarts["targets"][0]["legendFormat"] == "{{pod}}"
 
 
 def test_grafana_dashboard_adds_http_panels_when_metrics_path_set(
     flask_demo_config: config.NexusConfig,
 ) -> None:
-    """PRD §10.4's three app-level panels. PromQL uses prometheus-flask-
-    exporter's real metric names (flask_http_request_total,
-    flask_http_request_duration_seconds_bucket) — verified empirically
-    against a running instance of that exporter, not assumed; it does NOT
-    use the generic http_requests_total naming other client libraries use.
+    """PRD §10.4's three app-level panels, appended to the same consolidated
+    dashboard. PromQL uses prometheus-flask-exporter's real metric names
+    (flask_http_request_total, flask_http_request_duration_seconds_bucket)
+    — verified empirically against a running instance of that exporter, not
+    assumed; it does NOT use the generic http_requests_total naming other
+    client libraries use.
     """
     import json
 
     flask_demo_config.app.metricsPath = "/metrics"
     rendered = render.render_manifests(flask_demo_config)
     (doc,) = render.parse_documents(rendered["grafana-dashboard"])
+    overview = json.loads(doc["data"]["overview.json"])
+    panels = {p["title"]: p for p in overview["panels"]}
 
-    assert {"http-request-rate.json", "http-error-rate.json", "http-latency.json"} <= set(
-        doc["data"]
+    assert {"HTTP Requests/sec", "HTTP 5xx Responses/sec", "HTTP P95 Latency (seconds)"} <= set(
+        panels
     )
 
-    requests = json.loads(doc["data"]["http-request-rate.json"])
-    assert requests["uid"] == "nexus-app-requests"
-    expr = requests["panels"][0]["targets"][0]["expr"]
+    expr = panels["HTTP Requests/sec"]["targets"][0]["expr"]
     assert "flask_http_request_total" in expr
     assert 'namespace="nexus-app"' in expr
 
-    errors = json.loads(doc["data"]["http-error-rate.json"])
-    assert errors["uid"] == "nexus-app-errors"
-    expr = errors["panels"][0]["targets"][0]["expr"]
+    expr = panels["HTTP 5xx Responses/sec"]["targets"][0]["expr"]
     assert "flask_http_request_total" in expr
     assert 'status=~"5.."' in expr
 
-    latency = json.loads(doc["data"]["http-latency.json"])
-    assert latency["uid"] == "nexus-app-latency"
-    expr = latency["panels"][0]["targets"][0]["expr"]
+    expr = panels["HTTP P95 Latency (seconds)"]["targets"][0]["expr"]
     assert "histogram_quantile(0.95" in expr
     assert "flask_http_request_duration_seconds_bucket" in expr
 
@@ -484,16 +489,19 @@ def test_grafana_dashboard_omits_flask_http_panels_for_non_flask_stack(
 ) -> None:
     """A node/generic app with metricsPath set still gets scraped (the
     ServiceMonitor is stack-agnostic — see test_servicemonitor_* above) but
-    must not get three panels querying flask_http_request_* metric names its
-    own exporter never emits.
+    must not get panels querying flask_http_request_* metric names its own
+    exporter never emits.
     """
+    import json
+
     flask_demo_config.app.metricsPath = "/metrics"
     flask_demo_config.app.stack = "node"
     rendered = render.render_manifests(flask_demo_config)
     (doc,) = render.parse_documents(rendered["grafana-dashboard"])
-    assert not {"http-request-rate.json", "http-error-rate.json", "http-latency.json"} & set(
-        doc["data"]
-    )
+    overview = json.loads(doc["data"]["overview.json"])
+    titles = {p["title"] for p in overview["panels"]}
+    http_titles = {"HTTP Requests/sec", "HTTP 5xx Responses/sec", "HTTP P95 Latency (seconds)"}
+    assert not http_titles & titles
 
 
 # --- podchaos.yaml.j2 (legacy/chaos/pod-kill.yaml + pod-kill-schedule.yaml) ---

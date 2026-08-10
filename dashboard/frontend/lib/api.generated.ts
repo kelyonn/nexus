@@ -30,6 +30,12 @@ export interface MetricPoint {
 export interface MetricsResponse {
   cpu: MetricPoint[];
   memory: MetricPoint[];
+  restarts: MetricPoint[];
+  desired_replicas: MetricPoint[];
+  available_replicas: MetricPoint[];
+  http_request_rate: MetricPoint[];
+  http_error_rate: MetricPoint[];
+  http_latency_p95: MetricPoint[];
 }
 export interface PodSummary {
   name: string;

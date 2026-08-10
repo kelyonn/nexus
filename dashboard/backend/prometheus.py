@@ -19,6 +19,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 
 from nexus_cli.core.dashboard import PROMETHEUS_LOCAL_PORT
 from nexus_cli.core.output import NexusError
@@ -44,6 +45,50 @@ def cpu_query(app_name: str) -> str:
 
 def memory_query(app_name: str) -> str:
     return f'sum(container_memory_working_set_bytes{{namespace="{app_name}"}})'
+
+
+def restarts_query(app_name: str) -> str:
+    # Same metric + label scoping as templates/grafana-dashboard.yaml.j2's
+    # pod-restarts.json, aggregated across pods into one series — the App
+    # Detail panel shows "is anything restarting", not a per-pod breakdown.
+    return (
+        f'sum(increase(kube_pod_container_status_restarts_total'
+        f'{{namespace="{app_name}",container="{app_name}"}}[5m]))'
+    )
+
+
+def desired_replicas_query(app_name: str) -> str:
+    return f'kube_deployment_spec_replicas{{namespace="{app_name}",deployment="{app_name}"}}'
+
+
+def available_replicas_query(app_name: str) -> str:
+    return (
+        f'kube_deployment_status_replicas_available'
+        f'{{namespace="{app_name}",deployment="{app_name}"}}'
+    )
+
+
+# These three assume prometheus-flask-exporter's metric names, same as
+# templates/grafana-dashboard.yaml.j2's HTTP panels — see that template's
+# comment. Harmless to query for an app that doesn't emit them: Prometheus
+# just returns no series, which query_range already treats as "no data yet".
+def http_request_rate_query(app_name: str) -> str:
+    return f'sum(rate(flask_http_request_total{{namespace="{app_name}"}}[5m]))'
+
+
+def http_error_rate_query(app_name: str) -> str:
+    return (
+        f'sum(rate(flask_http_request_total'
+        f'{{namespace="{app_name}",status=~"5.."}}[5m]))'
+    )
+
+
+def http_latency_p95_query(app_name: str) -> str:
+    return (
+        "histogram_quantile(0.95, sum(rate("
+        f'flask_http_request_duration_seconds_bucket{{namespace="{app_name}"}}[5m]'
+        ")) by (le))"
+    )
 
 
 def parse_window(window: str) -> int:
@@ -96,3 +141,21 @@ def query_range(promql: str, window_seconds: int) -> list[tuple[float, float]]:
         return []
     values = results[0].get("values", [])
     return [(float(ts), float(v)) for ts, v in values]
+
+
+def query_range_many(
+    queries: dict[str, str], window_seconds: int
+) -> dict[str, list[tuple[float, float]]]:
+    """``query_range`` for several named PromQL queries at once, concurrently.
+
+    The metrics endpoint fires ~8 independent queries per poll; run one at a
+    time they'd serialize on QUERY_TIMEOUT (5s) each, turning a 15s poll into
+    a multi-second stall on a slow/unreachable Prometheus. Threads are fine
+    here — urllib.request.urlopen releases the GIL while blocked on I/O.
+    Referencing the module-level `query_range` by name (not a captured
+    reference) keeps this monkeypatch-friendly for tests, same as every other
+    caller in this module.
+    """
+    with ThreadPoolExecutor(max_workers=max(len(queries), 1)) as pool:
+        futures = {name: pool.submit(query_range, q, window_seconds) for name, q in queries.items()}
+        return {name: future.result() for name, future in futures.items()}

@@ -36,6 +36,45 @@ def test_memory_query_scopes_to_namespace() -> None:
     assert "container_memory_working_set_bytes" in q
 
 
+def test_restarts_query_scopes_to_namespace_and_container() -> None:
+    q = prometheus.restarts_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert 'container="my-app"' in q
+    assert "kube_pod_container_status_restarts_total" in q
+
+
+def test_desired_replicas_query_scopes_to_deployment() -> None:
+    q = prometheus.desired_replicas_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert 'deployment="my-app"' in q
+    assert "kube_deployment_spec_replicas" in q
+
+
+def test_available_replicas_query_scopes_to_deployment() -> None:
+    q = prometheus.available_replicas_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert 'deployment="my-app"' in q
+    assert "kube_deployment_status_replicas_available" in q
+
+
+def test_http_request_rate_query_scopes_to_namespace() -> None:
+    q = prometheus.http_request_rate_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert "flask_http_request_total" in q
+
+
+def test_http_error_rate_query_filters_5xx() -> None:
+    q = prometheus.http_error_rate_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert 'status=~"5.."' in q
+
+
+def test_http_latency_p95_query_uses_histogram_quantile() -> None:
+    q = prometheus.http_latency_p95_query("my-app")
+    assert 'namespace="my-app"' in q
+    assert "histogram_quantile(0.95" in q
+
+
 @pytest.mark.parametrize(
     ("window", "expected_seconds"),
     [("30s", 30), ("15m", 900), ("1h", 3600), ("2h", 7200)],
@@ -102,3 +141,21 @@ def test_query_range_step_scales_with_window() -> None:
     small_step = max(900 // prometheus.TARGET_POINTS, 1)
     large_step = max(7200 // prometheus.TARGET_POINTS, 1)
     assert large_step > small_step
+
+
+def test_query_range_many_runs_all_queries_concurrently(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_query_range(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        return [(0.0, float(len(promql)))]
+
+    monkeypatch.setattr(prometheus, "query_range", fake_query_range)
+    result = prometheus.query_range_many({"a": "one", "bb": "two-ish"}, 900)
+    assert result == {"a": [(0.0, 3.0)], "bb": [(0.0, 7.0)]}
+
+
+def test_query_range_many_propagates_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_unreachable(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        raise NexusError(what="Could not reach Prometheus.", why="Connection refused")
+
+    monkeypatch.setattr(prometheus, "query_range", raise_unreachable)
+    with pytest.raises(NexusError, match="Could not reach Prometheus"):
+        prometheus.query_range_many({"a": "one"}, 900)

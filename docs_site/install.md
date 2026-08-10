@@ -73,11 +73,13 @@ No Node.js needed — the frontend ships as a static export baked into the
 package. Needs at least one app deployed (the golden path above) to show
 anything on the Overview grid.
 
-`nexus dashboard` automatically port-forwards Grafana and Prometheus if it
-finds them on the cluster, so the Metrics panels and CPU/memory sparklines on
-the App Detail page just work — no manual `kubectl port-forward` needed. It
-also prints Grafana's admin login right then, so the embedded panels' login
-screen isn't a dead end.
+`nexus dashboard` automatically port-forwards Prometheus and Grafana if it
+finds them on the cluster — no manual `kubectl port-forward` needed. Prometheus
+feeds the App Detail page's own CPU/memory/replicas/restarts sparklines
+directly (native inline SVG, not Grafana); Grafana itself is one click away
+via "Open Grafana ↗", which deep-links straight to the app's one
+consolidated dashboard, and `nexus dashboard` prints the admin login right
+then so that click isn't a dead end.
 
 Want the request-rate / error-rate / P95-latency panels too? Set
 `app.metricsPath` in `nexus.yaml` — see the

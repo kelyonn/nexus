@@ -143,5 +143,6 @@ Launch the local dashboard and open it in your browser. No flags — see
 [Architecture](architecture.md#the-dashboard) for how it's put together.
 
 If Grafana is on the cluster, its admin login (`admin` / a generated
-password) is printed right when `nexus dashboard` forwards it, so the login
-screen on the embedded panels isn't a dead end.
+password) is printed right when `nexus dashboard` forwards it, so clicking
+"Open Grafana ↗" — a deep link to the app's one consolidated dashboard —
+isn't a dead end.
