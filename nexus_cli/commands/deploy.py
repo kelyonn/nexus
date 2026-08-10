@@ -398,6 +398,11 @@ def deploy(
     output.success(f"{name} is live")
     output.step("")
     output.step("Access your app:")
+    if "minikube" in (kubectl.current_context() or "").lower():
+        output.step(f"  minikube service {name} -n {name}")
+        output.step("  (tunnels and opens your browser automatically)")
+        output.step("")
+        output.step("  Or manually:")
     output.step(f"  kubectl -n {name} port-forward svc/{name} 18080:80")
     output.step("  → http://127.0.0.1:18080")
     output.step("")

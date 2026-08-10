@@ -8,7 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from nexus_cli.commands import deploy as deploy_module
-from nexus_cli.core import argocd, git, helm, preflight
+from nexus_cli.core import argocd, git, helm, kubectl, preflight
 from nexus_cli.core.config import AppConfig, NexusConfig, PlatformConfig
 from nexus_cli.core.output import NexusError
 from nexus_cli.main import app
@@ -47,6 +47,7 @@ def _minimal_config(*, monitoring: bool = True, chaos: bool = False) -> NexusCon
 
 def _stub_common(monkeypatch: pytest.MonkeyPatch, *, all_installed: bool = True) -> None:
     monkeypatch.setattr(preflight, "ensure_cluster_ready", lambda **k: None)
+    monkeypatch.setattr(kubectl, "current_context", lambda: "eks-prod")
     monkeypatch.setattr(
         preflight,
         "run",
@@ -118,6 +119,27 @@ def test_deploy_happy_path_all_deps_missing(
     assert "Register ArgoCD app" in result.output
     assert "Synced + Healthy" in result.output
     assert "my-app is live" in result.output
+    assert "kubectl -n my-app port-forward svc/my-app" in result.output
+    assert "minikube service" not in result.output
+
+
+def test_deploy_suggests_minikube_service_shortcut_on_minikube(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Minikube, a simpler one-command alternative to port-forward exists
+    (tunnels and opens the browser automatically) — surfaced alongside the
+    universal port-forward instructions, not instead of them.
+    """
+    monkeypatch.chdir(tmp_path)
+    _write_config(tmp_path)
+    _stub_common(monkeypatch, all_installed=False)
+    monkeypatch.setattr(kubectl, "current_context", lambda: "minikube")
+    monkeypatch.setattr(helm, "repo_add", lambda name, url: None)
+    monkeypatch.setattr(helm, "upgrade_install", lambda *a, **k: None)
+
+    result = runner.invoke(app, ["deploy"], input="y\n")
+    assert result.exit_code == 0, result.output
+    assert "minikube service my-app -n my-app" in result.output
     assert "kubectl -n my-app port-forward svc/my-app" in result.output
 
 

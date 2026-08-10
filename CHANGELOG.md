@@ -194,6 +194,12 @@ All notable changes to Nexus are documented here. Format based on
   (`maxUnavailable: 1`), omitted at `replicas: 1` where it would block every
   voluntary disruption instead of protecting anything. See
   `docs_site/schema.md`'s `security` section.
+- `nexus deploy`'s "Access your app" message now also suggests `minikube
+  service <name> -n <name>` when the current context is Minikube — it tunnels
+  a `ClusterIP` Service and opens the browser automatically, one command
+  instead of a manual `port-forward` plus opening the URL yourself. The
+  `kubectl port-forward` instructions are still shown alongside it, since
+  they're the only option that works on every cluster.
 
 ### Fixed
 - `deploy`/`upgrade`/`rollback` could report a rollout as successful while it
