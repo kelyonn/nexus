@@ -169,6 +169,36 @@ def test_grafana_available_false_when_service_missing(monkeypatch: pytest.Monkey
     assert dashboard.grafana_available() is False
 
 
+def test_grafana_admin_credentials_decodes_secret(monkeypatch: pytest.MonkeyPatch) -> None:
+    import base64
+
+    doc = {
+        "data": {
+            "admin-user": base64.b64encode(b"admin").decode(),
+            "admin-password": base64.b64encode(b"s3cr3t").decode(),
+        }
+    }
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: doc)
+    assert dashboard.grafana_admin_credentials() == ("admin", "s3cr3t")
+
+
+def test_grafana_admin_credentials_none_when_secret_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_not_found(*a: object, **k: object) -> None:
+        raise NexusError(what='secrets "kube-prom-stack-grafana" not found')
+
+    monkeypatch.setattr(dashboard.kubectl, "get_json", raise_not_found)
+    assert dashboard.grafana_admin_credentials() is None
+
+
+def test_grafana_admin_credentials_none_when_keys_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(dashboard.kubectl, "get_json", lambda *a, **k: {"data": {}})
+    assert dashboard.grafana_admin_credentials() is None
+
+
 def test_start_grafana_port_forward_returns_none_when_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

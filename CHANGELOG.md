@@ -200,6 +200,12 @@ All notable changes to Nexus are documented here. Format based on
   instead of a manual `port-forward` plus opening the URL yourself. The
   `kubectl port-forward` instructions are still shown alongside it, since
   they're the only option that works on every cluster.
+- `nexus dashboard` now prints the Grafana admin login (`grafana_admin_credentials()`
+  in `core/dashboard.py`, decoding kube-prometheus-stack's generated
+  `admin-user`/`admin-password` Secret) right when it forwards Grafana, so the
+  one place you're actually going to hit that login screen — the dashboard's
+  embedded panels — also tells you the credentials, instead of leaving you to
+  go hunt for them separately.
 
 ### Fixed
 - `deploy`/`upgrade`/`rollback` could report a rollout as successful while it

@@ -45,6 +45,7 @@ def _patch_happy_path(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
 
     monkeypatch.setattr(cd, "start_backend", start_backend)
     monkeypatch.setattr(cd, "start_grafana_port_forward", lambda: None)
+    monkeypatch.setattr(cd, "grafana_admin_credentials", lambda: None)
     monkeypatch.setattr(cd, "start_prometheus_port_forward", lambda: None)
     monkeypatch.setattr(cd, "wait_for_backend_ready", lambda: None)
     monkeypatch.setattr(cd, "dashboard_url", lambda token: f"http://x/?token={token}")
@@ -160,6 +161,33 @@ def test_dashboard_forwards_grafana_when_available_and_shuts_it_down(
         calls["backend_proc"],
         calls["grafana_proc"],
     )
+
+
+def test_dashboard_prints_grafana_credentials_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whole point of surfacing these is so the user never has to hunt
+    for them separately just to get past Grafana's login screen.
+    """
+    _patch_happy_path(monkeypatch)
+    monkeypatch.setattr(cd, "grafana_admin_credentials", lambda: ("admin", "s3cr3t"))
+
+    def raise_keyboard_interrupt() -> int:
+        raise KeyboardInterrupt
+
+    original_start_backend = cd.start_backend
+
+    def start_backend_and_arm_interrupt(token: str) -> _FakeProc:
+        proc = original_start_backend(token)
+        proc.wait = raise_keyboard_interrupt  # type: ignore[method-assign]
+        return proc
+
+    monkeypatch.setattr(cd, "start_backend", start_backend_and_arm_interrupt)
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0, result.output
+    assert "Grafana login: admin / s3cr3t" in result.output
 
 
 def test_dashboard_forwards_prometheus_when_available_and_shuts_it_down(

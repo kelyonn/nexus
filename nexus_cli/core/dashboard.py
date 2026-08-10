@@ -18,6 +18,7 @@ dashboard`` itself launches.
 
 from __future__ import annotations
 
+import base64
 import importlib.util
 import os
 import secrets
@@ -193,6 +194,27 @@ def start_grafana_port_forward() -> subprocess.Popen[bytes] | None:
     )
 
 
+def grafana_admin_credentials() -> tuple[str, str] | None:
+    """(username, password) for the Grafana admin login, or ``None`` if the
+    Secret isn't there (Grafana not installed).
+
+    kube-prometheus-stack's Grafana subchart names its generated admin
+    credentials Secret after the same release name as its Service
+    (``GRAFANA_SERVICE``), with base64-encoded ``admin-user``/
+    ``admin-password`` keys.
+    """
+    try:
+        doc = kubectl.get_json("secret", namespace=GRAFANA_NAMESPACE, name=GRAFANA_SERVICE)
+    except NexusError:
+        return None
+    data = doc.get("data", {})
+    username = data.get("admin-user")
+    password = data.get("admin-password")
+    if not username or not password:
+        return None
+    return base64.b64decode(username).decode(), base64.b64decode(password).decode()
+
+
 def prometheus_available() -> bool:
     return service_available(PROMETHEUS_SERVICE, PROMETHEUS_NAMESPACE)
 
@@ -270,6 +292,7 @@ __all__ = [
     "dashboard_url",
     "frontend_dir",
     "generate_token",
+    "grafana_admin_credentials",
     "grafana_available",
     "prometheus_available",
     "repo_root",
