@@ -196,6 +196,19 @@ All notable changes to Nexus are documented here. Format based on
   `docs_site/schema.md`'s `security` section.
 
 ### Fixed
+- `deploy`/`upgrade`/`rollback` could report a rollout as successful while it
+  was actually stuck: the ground-truth cross-check against ArgoCD's own
+  health (added for the `Progressing`-stuck-forever quirk below) compared
+  only `availableReplicas` against the desired count, which a stale
+  ReplicaSet's still-healthy old pods can satisfy on their own during a
+  rollout to a broken image — and separately, ArgoCD's own `health` field
+  could itself briefly report `Healthy` right as a bad rollout started,
+  before it noticed the new ReplicaSet was failing, bypassing the
+  cross-check entirely since it only guarded the `Progressing` case. Found by
+  live-deploying a broken image end-to-end ahead of the first release.
+  `status.rollout_complete()` now also requires `updatedReplicas` to meet the
+  desired count, and `wait_for_healthy()` cross-checks ground truth for both
+  `Healthy` and `Progressing` before trusting either.
 - `nexus deploy` now commits and pushes rendered manifests to the tracked git
   repo before registering the ArgoCD application, so `sync` can actually reach
   `Synced` on a first deploy (previously it never wrote to git, so ArgoCD had

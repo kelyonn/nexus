@@ -64,6 +64,24 @@ def replica_counts(namespace: str, name: str) -> tuple[int, int]:
     return desired, available
 
 
+def rollout_complete(namespace: str, name: str) -> bool:
+    """True only once the Deployment's *current* rollout has fully replaced
+    old replicas.
+
+    Unlike ``replica_counts``, also requires ``updatedReplicas`` to meet the
+    desired count — during a rolling update to a broken image, the *old*
+    ReplicaSet's still-healthy pods can satisfy ``availableReplicas >=
+    desired`` on their own while a new bad pod sits in ImagePullBackOff/
+    ErrImageNeverPull, which would otherwise read as "ready".
+    """
+    doc = kubectl.get_json("deployment", namespace=namespace, name=name)
+    desired = doc.get("spec", {}).get("replicas", 0)
+    doc_status = doc.get("status", {})
+    available = doc_status.get("availableReplicas", 0)
+    updated = doc_status.get("updatedReplicas", 0)
+    return desired > 0 and available >= desired and updated >= desired
+
+
 def image_pull_fix(pull_policy: str = "Always") -> str:
     """Context-aware fix suggestion for ImagePullBackOff (PRD §7.2).
 

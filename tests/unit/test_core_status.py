@@ -132,6 +132,34 @@ def test_replica_counts_defaults_to_zero_when_fields_absent(
     assert status.replica_counts("my-app", "my-app") == (0, 0)
 
 
+def test_rollout_complete_true_when_available_and_updated_meet_desired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doc = {"spec": {"replicas": 2}, "status": {"availableReplicas": 2, "updatedReplicas": 2}}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.rollout_complete("my-app", "my-app") is True
+
+
+def test_rollout_complete_false_when_old_replicas_satisfy_available_but_not_updated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale ReplicaSet's still-healthy pods can satisfy ``availableReplicas``
+    on their own while a new bad pod means the rollout hasn't completed —
+    ``updatedReplicas`` must also meet the desired count.
+    """
+    doc = {"spec": {"replicas": 2}, "status": {"availableReplicas": 2, "updatedReplicas": 1}}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.rollout_complete("my-app", "my-app") is False
+
+
+def test_rollout_complete_false_when_desired_is_zero(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    doc = {"spec": {"replicas": 0}, "status": {}}
+    monkeypatch.setattr(status.kubectl, "get_json", lambda *a, **k: doc)
+    assert status.rollout_complete("my-app", "my-app") is False
+
+
 def test_image_pull_fix_minikube(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(status.kubectl, "current_context", lambda: "minikube")
     assert "minikube image load" in status.image_pull_fix()
