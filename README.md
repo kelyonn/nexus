@@ -2,7 +2,7 @@
 
 > **Bring your app. Nexus handles the platform.**
 
-📖 **[Documentation](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
+**[Documentation](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
 607 tests, 99% core coverage · not yet on PyPI — install from source below
 
 ## What is Nexus
