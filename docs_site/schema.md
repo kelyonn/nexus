@@ -42,10 +42,9 @@ metrics" — the honest default for an arbitrary containerized app, since
 Nexus can't manufacture request-rate/error-rate/latency data your app never
 emits. Setting `metricsPath` renders a `ServiceMonitor` so
 kube-prometheus-stack's Prometheus scrapes your app directly, and three
-extra Grafana dashboards (request rate, error rate, P95 latency) get
-generated alongside the existing four. `metricsPort` defaults to `port` —
-set it only if your app serves metrics on a different port than it serves
-traffic.
+extra panels (request rate, error rate, P95 latency) get appended to the
+app's one Grafana dashboard. `metricsPort` defaults to `port` — set it only
+if your app serves metrics on a different port than it serves traffic.
 
 The Grafana panels assume Prometheus's standard histogram/counter naming
 convention (`<name>_total{status=...}`,

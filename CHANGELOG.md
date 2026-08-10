@@ -202,10 +202,9 @@ All notable changes to Nexus are documented here. Format based on
   they're the only option that works on every cluster.
 - `nexus dashboard` now prints the Grafana admin login (`grafana_admin_credentials()`
   in `core/dashboard.py`, decoding kube-prometheus-stack's generated
-  `admin-user`/`admin-password` Secret) right when it forwards Grafana, so the
-  one place you're actually going to hit that login screen — the dashboard's
-  embedded panels — also tells you the credentials, instead of leaving you to
-  go hunt for them separately.
+  `admin-user`/`admin-password` Secret) right when it forwards Grafana, so
+  clicking through to it isn't a dead end at a login screen with no visible
+  credentials to try.
 - `nexus open` — port-forwards the app's Service and opens it in your browser,
   until Ctrl+C. `nexus deploy` deliberately never does this itself: it's a
   one-shot, idempotent command, and a background tunnel left running after it
@@ -215,8 +214,24 @@ All notable changes to Nexus are documented here. Format based on
   quickstart previously ran through `deploy`/`status`/`watch`/`logs`/`chaos
   run`/`doctor`/`destroy` without ever mentioning how to actually look at the
   running app; it now includes this step.
-
-### Fixed
+- The dashboard's App Detail page no longer embeds Grafana panels via
+  iframe — an iframe pointed at an unauthenticated Grafana just silently
+  renders its login form at panel size, with no error event to hook into and
+  no way to tell "actually broken" apart from "just needs a login" from the
+  parent page. Replaced with what was already proven reliable for CPU/memory
+  (`GET /apps/{name}/metrics` → inline SVG): `Sparkline` now renders one or
+  more overlaid series sharing a y-scale (so "Desired vs Available Replicas"
+  is one two-line chart instead of needing two panels), covering replicas
+  and restarts alongside CPU/memory in the same native grid. "Open Grafana ↗"
+  is now a plain link, deep-linked straight to the app's dashboard (see
+  below) for anyone who wants raw Grafana — time-range picker, zoom,
+  PromQL, alerting.
+- `templates/grafana-dashboard.yaml.j2` now generates **one** Grafana
+  dashboard per app (uid `<app-name>-overview`) instead of four separate
+  single-panel ones (five with `app.metricsPath` set) — same PromQL, same
+  panel titles, just laid out in one JSON body with stacked `gridPos`
+  instead of split across separate ConfigMap keys, so there's exactly one
+  dashboard to open instead of several to click between.
 - `deploy`/`upgrade`/`rollback` could report a rollout as successful while it
   was actually stuck: the ground-truth cross-check against ArgoCD's own
   health (added for the `Progressing`-stuck-forever quirk below) compared

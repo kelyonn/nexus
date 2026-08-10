@@ -397,6 +397,42 @@ def test_metrics_returns_cpu_and_memory_series(monkeypatch: pytest.MonkeyPatch) 
     assert body["memory"] == [{"timestamp": 1000.0, "value": 1048576.0}]
 
 
+def test_metrics_returns_replica_and_restart_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+
+    def fake_query_range(promql: str, window_seconds: int) -> list[tuple[float, float]]:
+        if "restarts_total" in promql:
+            return [(1000.0, 1.0)]
+        if "spec_replicas" in promql:
+            return [(1000.0, 2.0)]
+        if "replicas_available" in promql:
+            return [(1000.0, 2.0)]
+        return []
+
+    monkeypatch.setattr(prometheus, "query_range", fake_query_range)
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["restarts"] == [{"timestamp": 1000.0, "value": 1.0}]
+    assert body["desired_replicas"] == [{"timestamp": 1000.0, "value": 2.0}]
+    assert body["available_replicas"] == [{"timestamp": 1000.0, "value": 2.0}]
+
+
+def test_metrics_returns_empty_http_series_for_app_without_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An app that never set app.metricsPath has no matching series — that's
+    empty data, not an error, same as cpu/memory for a traffic-free app."""
+    monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
+    monkeypatch.setattr(prometheus, "query_range", lambda promql, window_seconds: [])
+    resp = client.get("/api/apps/my-app/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["http_request_rate"] == []
+    assert body["http_error_rate"] == []
+    assert body["http_latency_p95"] == []
+
+
 def test_metrics_bad_window_returns_400(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(argocd, "get_status", lambda name: _app_status(name))
     resp = client.get("/api/apps/my-app/metrics", params={"window": "nonsense"})
@@ -422,4 +458,13 @@ def test_metrics_empty_when_app_has_no_series_yet(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(prometheus, "query_range", lambda promql, window_seconds: [])
     resp = client.get("/api/apps/my-app/metrics")
     assert resp.status_code == 200
-    assert resp.json() == {"cpu": [], "memory": []}
+    assert resp.json() == {
+        "cpu": [],
+        "memory": [],
+        "restarts": [],
+        "desired_replicas": [],
+        "available_replicas": [],
+        "http_request_rate": [],
+        "http_error_rate": [],
+        "http_latency_p95": [],
+    }

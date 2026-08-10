@@ -114,19 +114,26 @@ The frontend itself is a small React SPA with three routes — Overview
 (`/`), App Detail (`/apps?name=<app>` — a query param rather than a dynamic
 segment, since a static export can't serve arbitrary dynamic routes without
 knowing every app name at build time), and the GitOps Log (`/synclog`). No
-charting library: CPU/memory sparklines are inline SVG, and the four
-cluster-level Grafana panels (plus three more if `app.metricsPath` is set)
-are embedded via iframe, with `nexus dashboard` auto-port-forwarding Grafana
-and Prometheus so they work out of the box.
+charting library: pod age, CPU/memory, replicas, and restarts are all inline
+SVG sparklines fed by `GET /apps/{name}/metrics`, which proxies Prometheus
+`query_range` — real cluster data, not embedded Grafana. Grafana panels
+themselves are deliberately not embedded: an iframe pointed at an
+unauthenticated Grafana just renders its login form at a few hundred
+pixels tall with no visible error, which is a worse experience than one
+click. Instead, "Open Grafana ↗" deep-links straight to the app's one
+consolidated dashboard (below), and `nexus dashboard` prints the admin
+login right when it forwards Grafana so that one click doesn't dead-end.
 
 ## Observability
 
 `platform.monitoring: true` (the default) installs
 [kube-prometheus-stack](https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack)
-via Helm, and Nexus generates per-app `PrometheusRule`s and Grafana
-dashboards alongside the Deployment. Cluster-level panels (pod availability,
+via Helm, and Nexus generates one per-app Grafana dashboard (uid
+`<app-name>-overview`, `templates/grafana-dashboard.yaml.j2`) plus
+`PrometheusRule`s, alongside the Deployment — one place to look, not several
+dashboards to click between. Cluster-level panels (pod availability,
 restarts, CPU/memory, desired-vs-running) come from kube-state-metrics and
 cAdvisor — no changes to your app required. App-level panels (request rate,
-error rate, P95 latency) require your app to expose a Prometheus metrics
-endpoint (`app.metricsPath`) — see the
+error rate, P95 latency), appended to that same dashboard, require your app
+to expose a Prometheus metrics endpoint (`app.metricsPath`) — see the
 [schema reference](schema.md#metricspath-metricsport).
