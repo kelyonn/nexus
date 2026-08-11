@@ -6,7 +6,8 @@ cluster, and small fixes matter more than large ones.
 
 ## Before you start
 
-- **Not yet published to PyPI.** Install from source — see the
+- **Published on PyPI as `nexus-gitops`**, but contributing needs an
+  editable install from source, not `pip install nexus-gitops` — see the
   [README](README.md#try-it) or the
   [docs site's install guide](https://kelyonn.github.io/nexus/install/).
 - **Read [`docs_site/architecture.md`](docs_site/architecture.md) first** if
