@@ -10,9 +10,16 @@ Nexus shells out to `kubectl` and `helm` for most operations, and uses the
 `kubernetes` Python SDK for streaming commands (`nexus watch`, `nexus logs`).
 Both `kubectl` and `helm` need to be on your `PATH`.
 
-## Install from source
+## Install
 
-Not yet published to PyPI — install from a checkout:
+```bash
+pip install nexus-gitops
+```
+
+That's the whole install for using Nexus against your own app. The
+walkthrough below additionally clones this repo to use its bundled example
+app — for that, or for contributing, use an editable install from a
+checkout instead:
 
 ```bash
 git clone https://github.com/kelyonn/nexus.git && cd nexus

@@ -3,7 +3,7 @@
 > **Bring your app. Nexus handles the platform.**
 
 **[Documentation](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
-607 tests, 99% core coverage · not yet on PyPI — install from source below
+607 tests, 99% core coverage · `pip install nexus-gitops`
 
 ## What is Nexus
 
@@ -96,6 +96,16 @@ $ nexus deploy
 
 That's real, captured output — not a mockup. [Try it yourself](#try-it) below.
 
+## Install
+
+```bash
+pip install nexus-gitops
+```
+
+That's it for using Nexus against your own app — `nexus` is on your `PATH`,
+runnable from any directory. The walkthrough below additionally clones this
+repo to use its bundled example app.
+
 ## Try it
 
 Requires Python 3.10+, Docker, and [Minikube](https://minikube.sigs.k8s.io/)
@@ -105,7 +115,7 @@ Requires Python 3.10+, Docker, and [Minikube](https://minikube.sigs.k8s.io/)
 git clone https://github.com/kelyonn/nexus.git && cd nexus
 
 python3 -m venv venv && source venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # editable install of this checkout — see Install above for your own project
 
 minikube start --driver=docker
 
