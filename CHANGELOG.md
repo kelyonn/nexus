@@ -4,6 +4,25 @@ All notable changes to Nexus are documented here. Format based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-08-11
+
+### Fixed
+- `pyproject.toml` had no `[project.urls]` table, so the PyPI project page
+  had no Homepage/Repository/Documentation/Issues/Changelog links for PyPI
+  to build a "Project links" sidebar from. Added.
+- `README.md`'s architecture diagram was a `mermaid` fenced code block —
+  GitHub renders that natively, but PyPI's README renderer doesn't support
+  Mermaid at all, so it showed as raw, unrendered syntax on the PyPI project
+  page. Replaced with a static SVG (`assets/architecture.svg`, generated via
+  `@mermaid-js/mermaid-cli`) referenced by an absolute URL, which renders
+  identically on GitHub and PyPI.
+- `README.md`'s badge line and "not yet on PyPI" install instructions
+  (`CONTRIBUTING.md`, `docs_site/install.md`, `overrides/home.html`) were
+  fixed in a commit that landed after `v0.1.0` was already tagged and
+  built — PyPI bakes the README into the release artifact at build time and
+  never re-renders it, so `0.1.0`'s PyPI page kept showing the stale text
+  regardless. This release picks up the corrected content.
+
 ## [0.1.0] - 2026-08-10
 
 ### Added

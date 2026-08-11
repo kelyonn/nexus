@@ -19,6 +19,13 @@ dependencies = [
     "kubernetes>=29.0",
 ]
 
+[project.urls]
+Homepage = "https://kelyonn.github.io/nexus/"
+Documentation = "https://kelyonn.github.io/nexus/"
+Repository = "https://github.com/kelyonn/nexus"
+Issues = "https://github.com/kelyonn/nexus/issues"
+Changelog = "https://github.com/kelyonn/nexus/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 dev = [
     "pytest",
