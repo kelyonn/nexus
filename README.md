@@ -36,27 +36,7 @@ All on your own cluster — no DevOps team required.
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    Y["nexus.yaml"] --> CLI["nexus CLI\n(init / deploy / upgrade / rollback)"]
-    CLI -->|"render Jinja2 templates"| M["Kubernetes manifests"]
-    M -->|"kubectl apply"| NS
-    M -->|"git commit + push"| Repo[("Git repo\nk8s/")]
-    CLI -->|"register"| App["ArgoCD Application"]
-    Repo -.watched by.-> App
-    App -->|"sync + self-heal"| NS
-
-    subgraph Cluster["Your Kubernetes cluster"]
-        NS["App namespace\nDeployment + Service"]
-        Mon["Prometheus + Grafana"]
-        Chaos["Chaos Mesh (optional)"]
-    end
-
-    Mon -->|"scrapes"| NS
-    Chaos -.kills pods in.-> NS
-    Dash["nexus dashboard\n(local, your machine)"] -->|"kubectl / API"| Cluster
-    Dash -->|"port-forward"| Mon
-```
+![Architecture: nexus.yaml renders through the CLI into Kubernetes manifests, applied directly and also committed to git; ArgoCD watches that git path and reconciles the cluster, which runs the app namespace alongside Prometheus/Grafana and optional Chaos Mesh; nexus dashboard reads the cluster and Prometheus/Grafana locally, read-only.](https://raw.githubusercontent.com/kelyonn/nexus/main/assets/architecture.svg)
 
 `nexus deploy` never talks to the Kubernetes API directly for anything
 complex — it shells out to `kubectl`/`helm`, renders manifests from
