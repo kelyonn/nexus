@@ -1,55 +1,93 @@
-# Nexus
+<p align="center">
+  <img src="docs/readme/banner.svg" width="100%" alt="Nexus: a git commit flowing into a Kubernetes namespace where a killed pod is replaced on its own.">
+</p>
 
-> **Bring your app. Nexus handles the platform.**
+<p align="center">
+  <b>Bring your app. Nexus handles the platform.</b><br>
+  <sub>One config file and one command give any containerised app GitOps deployment, self-healing, observability and chaos testing on your own Kubernetes cluster.</sub>
+</p>
 
-**[Documentation](https://kelyonn.github.io/nexus/)** · Apache-2.0 · Python 3.10+ ·
-607 tests, 99% core coverage · `pip install nexus-gitops`
+<p align="center">
+  <sub>
+    <a href="https://kelyonn.github.io/nexus/">DOCUMENTATION</a> &nbsp;·&nbsp;
+    <a href="#quick-start">QUICK START</a> &nbsp;·&nbsp;
+    <a href="#how-it-works">HOW IT WORKS</a> &nbsp;·&nbsp;
+    <a href="#a-tour">A TOUR</a> &nbsp;·&nbsp;
+    <a href="#commands">COMMANDS</a> &nbsp;·&nbsp;
+    <a href="#design-choices">DESIGN CHOICES</a>
+  </sub>
+</p>
 
-## What is Nexus
+<br>
 
-Nexus is an open-source GitOps platform CLI. Point it at any containerized
-app, fill in one config file (`nexus.yaml`), run one command
-(`nexus deploy`), and get production-grade Kubernetes infrastructure —
-GitOps deployment, self-healing, observability, and optional chaos
-testing — on your own cluster, in minutes, without a dedicated DevOps team.
+<table>
+  <tr>
+    <td><sub>INSTALL</sub><br><code>pip install nexus-gitops</code></td>
+    <td><sub>PYTHON</sub><br><b>3.10+</b></td>
+    <td><sub>TESTS</sub><br><b>607, 99% core coverage</b></td>
+    <td><sub>LICENSE</sub><br><b>Apache-2.0</b></td>
+  </tr>
+</table>
 
-It's built for developers who want their app running on real Kubernetes
-infrastructure without first becoming a Kubernetes expert: Nexus generates
-every manifest, wires up ArgoCD, Prometheus, Grafana, and (optionally)
-Chaos Mesh, and gets out of the way — the underlying tools stay standard,
-inspectable Kubernetes objects, not a black box.
+## Overview
 
-- **GitOps deployment** via [ArgoCD](https://argo-cd.readthedocs.io/) — your
-  cluster's state is always driven from a git commit, never a one-off
-  `kubectl apply` no one can reproduce.
-- **Self-healing** — Kubernetes' own Deployment controller replaces a pod
-  the moment it dies, and ArgoCD reverts anything that drifts from what's
-  committed in git. Both are always on, independent of Nexus itself.
-- **Observability** via [Prometheus](https://prometheus.io/) +
-  [Grafana](https://grafana.com/) — one consolidated per-app dashboard,
-  plus live CPU/memory/replica/restart sparklines in `nexus dashboard`.
-- **Chaos testing** via [Chaos Mesh](https://chaos-mesh.org/) (optional) —
-  kill a pod on purpose, on demand or on a schedule, and confirm the
-  self-healing layer above actually catches it.
+Getting an app onto real Kubernetes usually means first becoming a Kubernetes expert. Nexus skips that step.
 
-All on your own cluster — no DevOps team required.
+Point it at a containerised app, fill in `nexus.yaml`, and run `nexus deploy`. You get production-grade infrastructure in minutes, and nothing is a black box: every object Nexus creates is a standard Kubernetes resource you can read and edit.
 
-## Architecture
+<table>
+  <tr>
+    <td width="25%" valign="top"><b>GitOps</b><br><sub>Cluster state always comes from a git commit, through ArgoCD.</sub></td>
+    <td width="25%" valign="top"><b>Self-healing</b><br><sub>Kubernetes replaces dead pods; ArgoCD reverts drift. Both run even if Nexus is gone.</sub></td>
+    <td width="25%" valign="top"><b>Observability</b><br><sub>Prometheus and one Grafana dashboard per app.</sub></td>
+    <td width="25%" valign="top"><b>Chaos</b><br><sub>Kill a pod on purpose with Chaos Mesh, and watch it recover.</sub></td>
+  </tr>
+</table>
 
-![Architecture: nexus.yaml renders through the CLI into Kubernetes manifests, applied directly and also committed to git; ArgoCD watches that git path and reconciles the cluster, which runs the app namespace alongside Prometheus/Grafana and optional Chaos Mesh; nexus dashboard reads the cluster and Prometheus/Grafana locally, read-only.](https://raw.githubusercontent.com/kelyonn/nexus/main/assets/architecture.svg)
+## Quick start
 
-`nexus deploy` never talks to the Kubernetes API directly for anything
-complex — it shells out to `kubectl`/`helm`, renders manifests from
-`nexus.yaml` via Jinja2, commits them to git, and registers an ArgoCD
-`Application`. From there, ArgoCD owns reconciliation: it's what actually
-applies drift correction and keeps the cluster matching git, not Nexus.
-`nexus dashboard` is a separate, local-only read layer — it never mutates
-cluster state except through the same one-click chaos trigger `nexus chaos
-run` uses. Full breakdown, including the repository layout and how each
-Jinja2 template maps to a `legacy/` reference manifest, in
-[Architecture](https://kelyonn.github.io/nexus/architecture/).
+Python 3.10+, Docker, and Minikube or Kind.
 
-## What it looks like
+```bash
+git clone https://github.com/kelyonn/nexus.git && cd nexus
+python3 -m venv venv && source venv/bin/activate
+pip install -e ".[dev]"
+minikube start --driver=docker
+
+cd examples/flask-demo
+nexus deploy        # installs ArgoCD and monitoring, deploys the app
+nexus open          # port-forward and open it
+```
+
+> [!TIP]
+> For your own app, `pip install nexus-gitops`, then `nexus init` in its folder. It detects the stack and writes a pre-filled `nexus.yaml`.
+
+```yaml
+app:
+  name: nexus-app
+  image: kelyonnnn17/nexus-app:v1
+  port: 5050
+  healthPath: /healthz
+  stack: flask
+  replicas: 2
+```
+
+## How it works
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/kelyonn/nexus/main/assets/architecture.svg" width="100%" alt="nexus.yaml renders through the CLI into manifests, applied directly and committed to git; ArgoCD watches git and reconciles the cluster, which runs the app alongside Prometheus, Grafana and optional Chaos Mesh.">
+</p>
+
+1. **Render.** `nexus.yaml` becomes Kubernetes manifests through Jinja2 templates.
+2. **Install what is missing.** ArgoCD and kube-prometheus-stack, through `kubectl` and `helm`.
+3. **Commit.** The manifests are committed to your repository under `k8s/`.
+4. **Hand over.** An ArgoCD `Application` is registered to track that path.
+
+From that point **ArgoCD owns reconciliation, not Nexus.** The dashboard is a separate, local, read-only layer.
+
+## A tour
+
+This is real, captured output, not a mock-up:
 
 ```
 $ nexus deploy
@@ -74,121 +112,64 @@ $ nexus deploy
   ✓ nexus-app is live
 ```
 
-That's real, captured output — not a mockup. [Try it yourself](#try-it) below.
-
-## Install
+Then break it on purpose:
 
 ```bash
-pip install nexus-gitops
+nexus status        # replicas, pods, ArgoCD sync and health
+nexus chaos run     # kill a pod
+nexus watch         # watch it come back
+nexus destroy       # type the app name to confirm
 ```
-
-That's it for using Nexus against your own app — `nexus` is on your `PATH`,
-runnable from any directory. The walkthrough below additionally clones this
-repo to use its bundled example app.
-
-## Try it
-
-Requires Python 3.10+, Docker, and [Minikube](https://minikube.sigs.k8s.io/)
-(or [Kind](https://kind.sigs.k8s.io/)).
-
-```bash
-git clone https://github.com/kelyonn/nexus.git && cd nexus
-
-python3 -m venv venv && source venv/bin/activate
-pip install -e ".[dev]"   # editable install of this checkout — see Install above for your own project
-
-minikube start --driver=docker
-
-cd examples/flask-demo
-nexus deploy      # installs ArgoCD + monitoring, deploys the app — type y
-nexus status        # replicas, pods, ArgoCD sync/health
-nexus open           # port-forwards the app and opens it in your browser, Ctrl+C to stop
-nexus watch          # live pod events, Ctrl+C to stop
-nexus logs            # tail every pod's logs, prefixed by pod name
-nexus chaos run        # kill one pod, watch it recover
-nexus doctor             # environment diagnostics — every problem, with a fix
-nexus destroy              # type the app name to confirm
-```
-
-`nexus deploy` never opens the app for you — it's a one-shot, idempotent
-command, and a background tunnel left running after it exits would collide
-with your next `nexus deploy`. `nexus open` is the dedicated way to view it
-(on Minikube, `minikube service <app-name> -n <app-name>` also works and
-skips the extra command). See
-[Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/) for
-the other options (`serviceType`, your own Ingress).
-
-`nexus deploy` is idempotent — safe to run more than once. `nexus upgrade
---image <tag>` and `nexus rollback` also exist but need a real git remote
-(see [INSTALLATION.md](INSTALLATION.md) to try those).
 
 ### The dashboard
 
 ```bash
-pip install -e ".[dashboard]"   # fastapi/uvicorn — not in the base install
-nexus dashboard                  # opens the browser, Ctrl+C to stop
+pip install -e ".[dashboard]"
+nexus dashboard
 ```
 
-A local control panel: an app grid, live CPU/memory/replica/restart
-sparklines, a chaos-trigger button with a recovery indicator, and a GitOps
-sync log with real commit messages. Grafana isn't embedded — an iframe
-pointed at an unauthenticated Grafana just silently shows its login form —
-so "Open Grafana ↗" is a plain link straight to the app's one consolidated
-dashboard, and `nexus dashboard` prints the admin login right when it
-forwards Grafana so that click isn't a dead end. No Node/npm needed at
-install time — the frontend ships as a static export baked into the
-package (a checkout needs one `npm run build` in
-[dashboard/frontend](dashboard/frontend) first; see that directory's README).
-Needs at least one app deployed to show anything.
+An app grid, live CPU, memory, replica and restart sparklines, a chaos button with a recovery indicator, and a GitOps sync log with real commit messages. It ships as a static export inside the Python package, so there is no Node at install time.
 
-## Command reference
+## Commands
 
 | Command | What it does |
 |---|---|
-| `nexus init` | Detect your app's stack, generate a pre-filled `nexus.yaml` |
-| `nexus deploy` | Install missing platform components, apply manifests, sync to git, register with ArgoCD |
-| `nexus status` | Replicas, ArgoCD sync/health, pod status |
-| `nexus open` | Port-forward the app and open it in your browser, until Ctrl+C |
-| `nexus watch` | Stream pod lifecycle events until Ctrl+C |
-| `nexus logs` | Tail every pod's logs, prefixed by pod name (`--follow` to stream) |
-| `nexus doctor` | Environment diagnostics — every problem, with a fix |
-| `nexus upgrade --image` | Bump the app's image, commit/push, roll out via ArgoCD |
-| `nexus rollback` | Revert the image through git (never ArgoCD's own rollback, which self-heal would undo) |
-| `nexus destroy` | Remove the app's namespace, ArgoCD app, and monitoring resources (typed-name confirmation) |
-| `nexus chaos run` / `chaos schedule` | One-shot or recurring pod-kill experiments via Chaos Mesh |
-| `nexus dashboard` | Launch the local control panel |
+| `nexus init` | Detect your stack, write `nexus.yaml` |
+| `nexus deploy` | Install what is missing, apply, commit, register with ArgoCD |
+| `nexus status` | Replicas, sync and health, pods |
+| `nexus open` | Port-forward and open the app until Ctrl+C |
+| `nexus watch` | Stream pod lifecycle events |
+| `nexus logs` | Every pod's logs, prefixed by pod name |
+| `nexus doctor` | Every environment problem, each with its fix |
+| `nexus upgrade --image` | Bump the image, commit, roll out |
+| `nexus rollback` | Revert the image through git |
+| `nexus destroy` | Remove everything, after a typed confirmation |
+| `nexus chaos run` · `chaos schedule` | One-off or recurring pod kills |
+| `nexus dashboard` | The local control panel |
 
-Every flag, straight from `--help`: [Command reference](https://kelyonn.github.io/nexus/commands/).
+Every flag, straight from `--help`, is in the [command reference](https://kelyonn.github.io/nexus/commands/).
+
+## Design choices
+
+> [!NOTE]
+> **Rollback goes through git, never ArgoCD's own rollback.** Self-heal would immediately undo a rollback that git does not agree with.
+
+- **`deploy` never leaves a tunnel running.** A background port-forward would collide with your next deploy, so viewing the app is its own command.
+- **Grafana is linked, not embedded.** An embedded unauthenticated Grafana silently shows its login form, so the dashboard links straight to the app's panel and prints the admin login.
+- **Idempotent by default.** Running `deploy` twice is safe.
 
 ## Documentation
 
-Full docs, including everything above in more depth:
-**<https://kelyonn.github.io/nexus/>**
-
-| Page | What's in it |
+| | |
 |---|---|
-| [Install & quickstart](https://kelyonn.github.io/nexus/install/) | A real app on Minikube or Kind in under ten minutes |
-| [Command reference](https://kelyonn.github.io/nexus/commands/) | Every command and flag, straight from `--help` |
-| [nexus.yaml schema](https://kelyonn.github.io/nexus/schema/) | Every field, its type, default, and validation rule |
-| [Architecture](https://kelyonn.github.io/nexus/architecture/) | How the CLI, manifests, ArgoCD, and dashboard fit together |
-| [Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/) | Port-forward, `serviceType`, or bring your own Ingress |
-| [Multiple environments](https://kelyonn.github.io/nexus/multi-environment/) | Staging and prod from separate `nexus.yaml` files |
-| [Troubleshooting](https://kelyonn.github.io/nexus/troubleshooting/) | Real problems hit during development, and their fixes |
-| [Cloud quick-starts](https://kelyonn.github.io/nexus/cloud/) | EKS/GKE/AKS notes (⚠️ not yet verified against real cloud clusters) |
+| [Install and quickstart](https://kelyonn.github.io/nexus/install/) | A real app on Minikube or Kind in ten minutes |
+| [`nexus.yaml` schema](https://kelyonn.github.io/nexus/schema/) | Every field, default and rule |
+| [Architecture](https://kelyonn.github.io/nexus/architecture/) | How the pieces connect |
+| [Exposing your app](https://kelyonn.github.io/nexus/exposing-your-app/) | Port-forward, `serviceType`, or your own Ingress |
+| [Multiple environments](https://kelyonn.github.io/nexus/multi-environment/) | Staging and production |
+| [Troubleshooting](https://kelyonn.github.io/nexus/troubleshooting/) | Real problems and their fixes |
+| [Cloud quick-starts](https://kelyonn.github.io/nexus/cloud/) | EKS, GKE and AKS notes, not yet verified on real clusters |
 
-Built from [docs_site/](docs_site) with MkDocs Material, deployed to GitHub
-Pages on every push to `main` that touches the site — see
-[CONTRIBUTING.md](CONTRIBUTING.md#before-opening-a-pr) to work on it locally.
+Contributions are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md), and [FUTURE-SCOPE.md](FUTURE-SCOPE.md) for ideas that are real but deliberately not started.
 
-## Contributing
-
-PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the pre-PR
-gate, and this project's scope boundaries. Fresh-install notes:
-[INSTALLATION.md](INSTALLATION.md). Bigger ideas that are real but
-deliberately not started yet are tracked in
-[FUTURE-SCOPE.md](FUTURE-SCOPE.md), with the design questions each one needs
-answered first.
-
-## License
-
-Apache-2.0.
+<sub>Apache-2.0.</sub>
