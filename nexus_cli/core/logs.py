@@ -22,6 +22,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from kubernetes import client as k8s_client
 from kubernetes import config as k8s_config
@@ -59,6 +60,19 @@ def load_kube_config() -> None:
         ) from exc
 
 
+def _pod_names(pod_list: Any) -> list[str]:
+    """Names of the pods in a list response, sorted, skipping any without one.
+
+    kubernetes>=31 types ``metadata`` and ``metadata.name`` as optional; a
+    real pod always has both, but the check keeps the types honest.
+    """
+    return sorted(
+        pod.metadata.name
+        for pod in pod_list.items
+        if pod.metadata is not None and pod.metadata.name
+    )
+
+
 def get_pod_logs(
     namespace: str, app_name: str, *, tail: int = DEFAULT_TAIL
 ) -> list[PodLog]:
@@ -69,7 +83,7 @@ def get_pod_logs(
     load_kube_config()
     api = k8s_client.CoreV1Api()
     pod_list = api.list_namespaced_pod(namespace, label_selector=f"app={app_name}")
-    pod_names = sorted(pod.metadata.name for pod in pod_list.items)
+    pod_names = _pod_names(pod_list)
 
     results: list[PodLog] = []
     for pod_name in pod_names:
@@ -77,7 +91,9 @@ def get_pod_logs(
             # `_preload_content=False` avoids a kubernetes-client deserialization bug
             # where read_namespaced_pod_log() returns str(bytes) (a literal "b'...'"
             # string) instead of decoded text. The raw response's .data is real bytes.
-            resp = api.read_namespaced_pod_log(
+            # With _preload_content=False the client returns the raw urllib3
+            # response, which its own type hints (str) do not describe.
+            resp: Any = api.read_namespaced_pod_log(
                 pod_name, namespace, tail_lines=tail, _preload_content=False
             )
             log_text = resp.data.decode("utf-8", errors="replace")
@@ -133,7 +149,7 @@ def follow_pod_logs(
     load_kube_config()
     api = k8s_client.CoreV1Api()
     pod_list = api.list_namespaced_pod(namespace, label_selector=f"app={app_name}")
-    pod_names = sorted(pod.metadata.name for pod in pod_list.items)
+    pod_names = _pod_names(pod_list)
     if not pod_names:
         return []
 
